@@ -21,6 +21,9 @@ export default function MediaCard({ item, onSelect, compact = false }) {
       <div className="media-thumb">
         {item.mediaType === "video" ? (
           <div className="media-thumb-video-placeholder">
+            <span className="media-thumb-video-orb" aria-hidden="true">
+              <span className="media-thumb-video-triangle" />
+            </span>
             <span className="media-thumb-video-label">VIDEO</span>
           </div>
         ) : (

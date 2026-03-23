@@ -7,6 +7,7 @@ function navItems(isAdmin) {
   return [
     { to: "/", label: "Обзор" },
     { to: "/upload", label: "Загрузка" },
+    { to: "/shorts", label: "Шортсы" },
     { to: "/library", label: "Библиотека" },
     { to: "/review", label: "Разметка" },
     { to: "/tags", label: "Теги" },

@@ -11,6 +11,7 @@ import SettingsPage from "./pages/SettingsPage";
 import SetupPage from "./pages/SetupPage";
 import ShareViewPage from "./pages/ShareViewPage";
 import SharesPage from "./pages/SharesPage";
+import ShortsPage from "./pages/ShortsPage";
 import TagsPage from "./pages/TagsPage";
 import UploadPage from "./pages/UploadPage";
 import UsersPage from "./pages/UsersPage";
@@ -62,6 +63,7 @@ export default function App() {
       <Route element={<ProtectedLayout />}>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/upload" element={<UploadPage />} />
+        <Route path="/shorts" element={<ShortsPage />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/review" element={<ReviewPage />} />
         <Route path="/tags" element={<TagsPage />} />

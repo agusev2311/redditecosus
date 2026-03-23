@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from flask import current_app, url_for
+from flask import current_app, has_request_context, request, url_for
 
 from ..auth import extract_request_token
 
@@ -22,6 +22,40 @@ def _url_with_token(endpoint: str, **values) -> str:
         return url
     separator = "&" if "?" in url else "?"
     return f"{url}{separator}token={token}"
+
+
+def _configured_frontend_base_url() -> str:
+    return current_app.config["FRONTEND_BASE_URL"].rstrip("/")
+
+
+def _is_local_frontend_url(url: str) -> bool:
+    lowered = url.lower()
+    return any(marker in lowered for marker in ("localhost", "127.0.0.1", "0.0.0.0", "[::1]"))
+
+
+def _request_frontend_base_url() -> str | None:
+    if not has_request_context():
+        return None
+    scheme = request.headers.get("X-Forwarded-Proto", request.scheme).strip()
+    host = (
+        request.headers.get("X-Forwarded-Host")
+        or request.headers.get("Host")
+        or request.host
+        or ""
+    ).strip()
+    if not host:
+        return None
+    return f"{scheme}://{host}".rstrip("/")
+
+
+def _frontend_base_url() -> str:
+    configured = _configured_frontend_base_url()
+    request_url = _request_frontend_base_url()
+    if configured and not _is_local_frontend_url(configured):
+        return configured
+    if request_url:
+        return request_url
+    return configured
 
 
 def serialize_user(user):
@@ -138,7 +172,7 @@ def serialize_batch(batch, include_files: bool = True):
 
 
 def serialize_share(share):
-    frontend = current_app.config["FRONTEND_BASE_URL"].rstrip("/")
+    frontend = _frontend_base_url()
     return {
         "id": share.id,
         "token": share.token,

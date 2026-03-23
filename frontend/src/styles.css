@@ -656,10 +656,36 @@ textarea {
   height: 100%;
   display: grid;
   place-items: center;
+  gap: 12px;
   background:
     radial-gradient(circle at 30% 20%, rgba(124, 58, 237, 0.18), transparent 34%),
     radial-gradient(circle at 70% 80%, rgba(16, 185, 129, 0.12), transparent 28%),
     linear-gradient(180deg, rgba(14, 18, 31, 0.92), rgba(10, 14, 24, 0.98));
+}
+
+.media-thumb-video-orb {
+  width: 68px;
+  height: 68px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--line) 62%, white 38%);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03)),
+    linear-gradient(135deg, rgba(124, 58, 237, 0.2), rgba(16, 185, 129, 0.14));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 14px 28px rgba(7, 10, 20, 0.22);
+}
+
+.media-thumb-video-triangle {
+  width: 0;
+  height: 0;
+  margin-left: 4px;
+  border-top: 11px solid transparent;
+  border-bottom: 11px solid transparent;
+  border-left: 18px solid rgba(248, 250, 252, 0.95);
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.2));
 }
 
 .media-thumb-video-label {
@@ -1380,6 +1406,101 @@ button.tag-badge:hover {
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
 }
 
+.shorts-page {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.shorts-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.shorts-toolbar {
+  justify-content: flex-end;
+}
+
+.shorts-meta-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.shorts-feed {
+  display: grid;
+  gap: 16px;
+  max-height: min(80vh, 920px);
+  overflow-y: auto;
+  padding-right: 6px;
+  scroll-snap-type: y mandatory;
+}
+
+.shorts-card {
+  position: relative;
+  min-height: min(76vh, 860px);
+  border-radius: 30px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(circle at top left, rgba(124, 58, 237, 0.16), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(16, 185, 129, 0.12), transparent 24%),
+    linear-gradient(180deg, rgba(10, 14, 24, 0.98), rgba(7, 10, 17, 1));
+  scroll-snap-align: start;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 10%, transparent),
+    0 20px 46px rgba(7, 10, 20, 0.24);
+}
+
+.shorts-card-active {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 14%, transparent),
+    0 24px 58px rgba(7, 10, 20, 0.3);
+}
+
+.shorts-video {
+  width: 100%;
+  height: min(76vh, 860px);
+  object-fit: contain;
+  background: #05070d;
+}
+
+.shorts-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  padding: clamp(16px, 2.6vw, 24px);
+  background:
+    linear-gradient(180deg, rgba(6, 10, 18, 0.06), rgba(6, 10, 18, 0.12) 38%, rgba(6, 10, 18, 0.84) 100%);
+  pointer-events: none;
+}
+
+.shorts-copy,
+.shorts-rail {
+  pointer-events: auto;
+}
+
+.shorts-copy {
+  display: grid;
+  gap: 10px;
+  max-width: min(680px, 100%);
+}
+
+.shorts-copy h2 {
+  font-size: clamp(1.1rem, 2.2vw, 1.5rem);
+}
+
+.shorts-rail {
+  display: grid;
+  gap: 10px;
+  justify-items: end;
+}
+
+.shorts-rail-button {
+  min-width: 128px;
+}
+
 @media (max-width: 1100px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -1448,6 +1569,10 @@ button.tag-badge:hover {
   .sticky-panel {
     position: static;
   }
+
+  .shorts-feed {
+    max-height: none;
+  }
 }
 
 @media (max-width: 720px) {
@@ -1485,9 +1610,22 @@ button.tag-badge:hover {
   .review-quick-add,
   .review-action-bar,
   .tag-gallery-top,
-  .tag-gradient-stop {
+  .tag-gradient-stop,
+  .shorts-overlay {
     grid-template-columns: 1fr;
     display: grid;
+  }
+
+  .shorts-overlay {
+    align-items: end;
+  }
+
+  .shorts-rail {
+    justify-items: stretch;
+  }
+
+  .shorts-rail-button {
+    min-width: 0;
   }
 
   .color-field-main {
