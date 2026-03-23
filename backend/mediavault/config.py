@@ -10,13 +10,13 @@ def _path_env(name: str, default: Path) -> Path:
 class Config:
     PROJECT_ROOT = Path(__file__).resolve().parents[2]
     DATA_ROOT = _path_env("MEDIAHUB_DATA_ROOT", PROJECT_ROOT / "data")
-    STORAGE_ROOT = DATA_ROOT / "storage"
-    ORIGINALS_ROOT = STORAGE_ROOT / "originals"
-    PREVIEWS_ROOT = STORAGE_ROOT / "previews"
-    IMPORTS_ROOT = DATA_ROOT / "imports"
-    EXPORTS_ROOT = DATA_ROOT / "exports"
-    BACKUPS_ROOT = DATA_ROOT / "backups"
-    DATABASE_PATH = DATA_ROOT / "mediahub.db"
+    STORAGE_ROOT = _path_env("MEDIAHUB_STORAGE_ROOT", DATA_ROOT / "storage")
+    ORIGINALS_ROOT = _path_env("MEDIAHUB_ORIGINALS_ROOT", STORAGE_ROOT / "originals")
+    PREVIEWS_ROOT = _path_env("MEDIAHUB_PREVIEWS_ROOT", STORAGE_ROOT / "previews")
+    IMPORTS_ROOT = _path_env("MEDIAHUB_IMPORTS_ROOT", DATA_ROOT / "imports")
+    EXPORTS_ROOT = _path_env("MEDIAHUB_EXPORTS_ROOT", DATA_ROOT / "exports")
+    BACKUPS_ROOT = _path_env("MEDIAHUB_BACKUPS_ROOT", DATA_ROOT / "backups")
+    DATABASE_PATH = _path_env("MEDIAHUB_DATABASE_PATH", DATA_ROOT / "mediahub.db")
 
     SQLALCHEMY_DATABASE_URI = f"sqlite:///{DATABASE_PATH.as_posix()}"
     SQLALCHEMY_TRACK_MODIFICATIONS = False
