@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 import os
+import shutil
 import struct
 import tempfile
 from contextlib import contextmanager
@@ -259,7 +260,7 @@ def store_original(temp_path: Path, hash_hex: str, original_filename: str) -> st
         temp_path.unlink(missing_ok=True)
     else:
         ensure_parent(absolute)
-        temp_path.replace(absolute)
+        shutil.move(str(temp_path), str(absolute))
     return relative.as_posix()
 
 
@@ -276,7 +277,7 @@ def store_preview(temp_path: Path, hash_hex: str) -> str:
         temp_path.unlink(missing_ok=True)
     else:
         ensure_parent(absolute)
-        temp_path.replace(absolute)
+        shutil.move(str(temp_path), str(absolute))
     return relative.as_posix()
 
 

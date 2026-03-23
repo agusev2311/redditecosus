@@ -81,10 +81,14 @@ def _prepare_media_record(owner_id: int, batch_id: str, original_filename: str, 
     perceptual_hash = None
     if media_type == "image":
         width, height = inspect_image_size(source_path)
-        preview_temp = Path(tempfile.mkdtemp(dir=current_app.config["IMPORTS_ROOT"])) / f"{sha256_hash}.jpg"
-        width, height = generate_image_preview(source_path, preview_temp)
-        perceptual_hash = compute_perceptual_hash(preview_temp) or compute_perceptual_hash(source_path)
-        preview_path = store_preview(preview_temp, sha256_hash)
+        preview_temp_dir = Path(tempfile.mkdtemp(dir=current_app.config["IMPORTS_ROOT"]))
+        preview_temp = preview_temp_dir / f"{sha256_hash}.jpg"
+        try:
+            width, height = generate_image_preview(source_path, preview_temp)
+            perceptual_hash = compute_perceptual_hash(preview_temp) or compute_perceptual_hash(source_path)
+            preview_path = store_preview(preview_temp, sha256_hash)
+        finally:
+            shutil.rmtree(preview_temp_dir, ignore_errors=True)
 
     storage_path = store_original(source_path, sha256_hash, original_filename)
 
