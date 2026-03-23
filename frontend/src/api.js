@@ -104,7 +104,16 @@ export function uploadBinaryChunk(path, blob, { token, headers = {}, onProgress 
         error.status = xhr.status;
         reject(error);
       } catch {
-        reject(new Error("Invalid server response"));
+        const trimmed = (xhr.responseText || "").trim();
+        const preview = trimmed ? trimmed.slice(0, 120) : "";
+        const error = new Error(
+          preview
+            ? `Server returned non-JSON response (${xhr.status}): ${preview}`
+            : `Server returned non-JSON response (${xhr.status})`
+        );
+        error.status = xhr.status;
+        error.responseText = xhr.responseText;
+        reject(error);
       }
     };
     xhr.onerror = () => reject(new Error("Network error"));

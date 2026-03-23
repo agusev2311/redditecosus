@@ -53,6 +53,35 @@ docker compose up --build
 - Если архив `.zip/.tar/.tgz` прислать боту документом из разрешённого чата, он уйдёт в импорт.
 - Важно: через обычный cloud `api.telegram.org` бот может скачать только небольшие файлы. Для больших архивов через Telegram нужен локальный Telegram Bot API server.
 
+### Локальный Telegram Bot API в Docker
+
+Если хотите, чтобы локальный Telegram Bot API server поднимался и опускался вместе с проектом, включите отдельный compose-сервис:
+
+1. Получите `api_id` и `api_hash` на [my.telegram.org](https://my.telegram.org).
+2. В `.env` пропишите:
+
+```env
+MEDIAHUB_TELEGRAM_API_BASE_URL=http://telegram-bot-api:8081
+MEDIAHUB_TELEGRAM_LOCAL_API_ID=123456
+MEDIAHUB_TELEGRAM_LOCAL_API_HASH=your_api_hash
+COMPOSE_PROFILES=telegram-local-api
+```
+
+3. Если бот раньше работал через обычный cloud Bot API, один раз разлогиньте его там перед первым запуском локального сервера:
+
+```text
+https://api.telegram.org/bot<YOUR_BOT_TOKEN>/logOut
+```
+
+4. После этого запускайте проект как обычно:
+
+```bash
+docker compose up --build
+```
+
+5. Сервис `telegram-bot-api` будет жить внутри того же `docker compose`, а backend будет ходить к нему по `http://telegram-bot-api:8081`.
+6. Файлы локального Bot API будут лежать рядом с проектом в `./data/telegram-bot-api`.
+
 ## Ограничения текущей версии
 
 - дубликаты сейчас ищутся только как точные совпадения, без perceptual hash

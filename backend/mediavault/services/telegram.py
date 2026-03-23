@@ -128,6 +128,15 @@ def _get_updates(offset: int | None = None) -> list[dict]:
 def _download_file(file_id: str, destination: Path) -> None:
     file_payload = _api_request("GET", "getFile", params={"file_id": file_id})
     file_path = file_payload["result"]["file_path"]
+    local_path = Path(file_path)
+    if local_path.is_absolute():
+        if local_path.exists():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(local_path, destination)
+            return
+        raise RuntimeError(
+            "Telegram local Bot API returned a local file path that is not mounted into the backend container"
+        )
     response = requests.get(
         f"{telegram_api_base_url()}/file/bot{telegram_bot_token()}/{file_path}",
         timeout=180,
