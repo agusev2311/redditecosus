@@ -35,12 +35,23 @@ def _ensure_upload_allowed():
     return None
 
 
-def _refresh_batch_upload_counters(batch: UploadBatch) -> None:
-    files = UploadFile.query.filter_by(batch_id=batch.id).all()
-    batch.uploaded_files = sum(
-        1 for file in files if file.size_bytes > 0 and file.uploaded_bytes >= file.size_bytes
-    )
-    batch.uploaded_bytes = sum(file.uploaded_bytes for file in files)
+def _is_upload_complete(upload: UploadFile, uploaded_bytes: int | None = None) -> bool:
+    current_bytes = upload.uploaded_bytes if uploaded_bytes is None else uploaded_bytes
+    return upload.size_bytes > 0 and current_bytes >= upload.size_bytes
+
+
+def _apply_upload_progress(batch: UploadBatch, upload: UploadFile, uploaded_bytes: int) -> None:
+    previous_uploaded = upload.uploaded_bytes or 0
+    previous_complete = _is_upload_complete(upload, previous_uploaded)
+    next_uploaded = max(0, min(uploaded_bytes, upload.size_bytes or uploaded_bytes))
+    upload.uploaded_bytes = next_uploaded
+    batch.uploaded_bytes = max(0, (batch.uploaded_bytes or 0) + (next_uploaded - previous_uploaded))
+
+    next_complete = _is_upload_complete(upload, next_uploaded)
+    if not previous_complete and next_complete:
+        batch.uploaded_files = (batch.uploaded_files or 0) + 1
+    elif previous_complete and not next_complete:
+        batch.uploaded_files = max(0, (batch.uploaded_files or 0) - 1)
 
 
 def _serialize_upload_file(file: UploadFile):
@@ -133,7 +144,8 @@ def upload_file(batch_id: str):
         status="uploaded",
     )
     db.session.add(upload)
-    _refresh_batch_upload_counters(batch)
+    batch.uploaded_bytes = (batch.uploaded_bytes or 0) + size
+    batch.uploaded_files = (batch.uploaded_files or 0) + 1
     db.session.commit()
     return jsonify(
         {
@@ -196,7 +208,7 @@ def sync_upload_file(batch_id: str):
     temp_path = Path(upload.temp_path)
     actual_size = temp_path.stat().st_size if temp_path.exists() else 0
     if actual_size != upload.uploaded_bytes:
-        upload.uploaded_bytes = actual_size
+        _apply_upload_progress(batch, upload, actual_size)
     if upload.chunk_size > 0 and upload.uploaded_bytes > 0:
         upload.uploaded_chunks = min(
             upload.total_chunks or upload.uploaded_chunks,
@@ -206,7 +218,6 @@ def sync_upload_file(batch_id: str):
     if upload.status == "uploaded" and not upload.finalized_at:
         upload.finalized_at = datetime.utcnow()
 
-    _refresh_batch_upload_counters(batch)
     db.session.commit()
     return jsonify({"item": _serialize_upload_file(upload), "batch": serialize_batch(batch, include_files=False)})
 
@@ -230,13 +241,12 @@ def upload_file_chunk(batch_id: str, file_id: str):
 
     actual_start, actual_end = append_upload_chunk(Path(upload.temp_path), start_byte, payload)
     if actual_start != start_byte:
-        upload.uploaded_bytes = actual_start
+        _apply_upload_progress(batch, upload, actual_start)
         if upload.chunk_size > 0:
             upload.uploaded_chunks = min(
                 upload.total_chunks or upload.uploaded_chunks,
                 (upload.uploaded_bytes + upload.chunk_size - 1) // upload.chunk_size,
             )
-        _refresh_batch_upload_counters(batch)
         db.session.commit()
         return (
             jsonify(
@@ -249,12 +259,11 @@ def upload_file_chunk(batch_id: str, file_id: str):
             409,
         )
 
-    upload.uploaded_bytes = actual_end
+    _apply_upload_progress(batch, upload, actual_end)
     upload.uploaded_chunks = max(upload.uploaded_chunks, chunk_index + 1)
     upload.status = "uploaded" if upload.uploaded_bytes >= upload.size_bytes else "uploading"
     if upload.status == "uploaded":
         upload.finalized_at = datetime.utcnow()
-    _refresh_batch_upload_counters(batch)
     db.session.commit()
     return jsonify({"item": _serialize_upload_file(upload), "batch": serialize_batch(batch, include_files=False)})
 
@@ -269,7 +278,6 @@ def finalize_upload_file(batch_id: str, file_id: str):
     upload.status = "uploaded"
     if not upload.finalized_at:
         upload.finalized_at = datetime.utcnow()
-    _refresh_batch_upload_counters(batch)
     db.session.commit()
     return jsonify({"item": _serialize_upload_file(upload), "batch": serialize_batch(batch, include_files=False)})
 
@@ -287,7 +295,10 @@ def commit_batch(batch_id: str):
     if incomplete:
         return jsonify({"error": "Some files are not fully uploaded yet", "items": incomplete[:10]}), 409
     batch.status = "queued"
-    _refresh_batch_upload_counters(batch)
+    batch.uploaded_files = sum(
+        1 for file in files if file.size_bytes > 0 and file.uploaded_bytes >= file.size_bytes
+    )
+    batch.uploaded_bytes = sum(file.uploaded_bytes for file in files)
     db.session.commit()
     launch_batch_job(current_app._get_current_object(), batch.id)
     return jsonify({"item": serialize_batch(batch)})

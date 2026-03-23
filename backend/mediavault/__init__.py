@@ -60,6 +60,7 @@ def create_app() -> Flask:
                 "message": "MediaHub backend is running.",
                 "frontendUrl": _guess_frontend_url(),
                 "healthUrl": "/api/health",
+                "recommendedUploadChunkBytes": app.config["RESUMABLE_UPLOAD_CHUNK_BYTES"],
             }
         )
 

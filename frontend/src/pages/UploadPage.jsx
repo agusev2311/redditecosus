@@ -4,7 +4,9 @@ import { apiFetch, getStoredToken, uploadBinaryChunk } from "../api";
 import { formatBytes, formatDuration, formatRate } from "../lib/format";
 
 const DRAFT_KEY = "mediahub_upload_draft_v2";
-const DEFAULT_CHUNK_SIZE = 4 * 1024 * 1024;
+const DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024;
+const DRAFT_SYNC_DELAY_MS = 800;
+const PROGRESS_REFRESH_MS = 120;
 
 function fileSignature(file) {
   return `${file.name}:${file.size}:${file.lastModified}`;
@@ -33,7 +35,7 @@ function sameSignatureSet(files, draft) {
   return current.length === saved.length && current.every((value, index) => value === saved[index]);
 }
 
-function queueFromFiles(files, draft) {
+function queueFromFiles(files, draft, preferredChunkSize = DEFAULT_CHUNK_SIZE) {
   return files.map((file) => {
     const signature = fileSignature(file);
     const saved = draft?.files?.[signature];
@@ -47,7 +49,7 @@ function queueFromFiles(files, draft) {
       uploadedBytes,
       progress: file.size ? uploadedBytes / file.size : 0,
       status: saved ? saved.status || "paused" : "queued",
-      chunkSize: saved?.chunkSize || DEFAULT_CHUNK_SIZE,
+      chunkSize: saved?.chunkSize || preferredChunkSize,
       error: saved?.error || "",
     };
   });
@@ -79,6 +81,9 @@ export default function UploadPage() {
   const resumeOnReconnectRef = useRef(false);
   const sessionIdRef = useRef(readDraft()?.batchId || null);
   const startUploadRef = useRef(null);
+  const queueRef = useRef([]);
+  const draftSyncTimeoutRef = useRef(null);
+  const lastProgressUpdateRef = useRef(0);
   const [files, setFiles] = useState([]);
   const [session, setSession] = useState(null);
   const [queue, setQueue] = useState([]);
@@ -89,6 +94,7 @@ export default function UploadPage() {
   const [resumeDraft, setResumeDraft] = useState(readDraft());
   const [telemetry, setTelemetry] = useState({ speed: 0, eta: 0 });
   const [startedAt, setStartedAt] = useState(null);
+  const [preferredChunkSize, setPreferredChunkSize] = useState(DEFAULT_CHUNK_SIZE);
 
   const totals = useMemo(() => {
     const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
@@ -99,6 +105,17 @@ export default function UploadPage() {
       totalFiles: files.length,
     };
   }, [files, queue]);
+
+  useEffect(() => {
+    apiFetch("", { token: "" })
+      .then((response) => {
+        const recommendedChunkSize = Number(response.recommendedUploadChunkBytes || 0);
+        if (recommendedChunkSize > 0) {
+          setPreferredChunkSize(recommendedChunkSize);
+        }
+      })
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     const draft = readDraft();
@@ -136,6 +153,18 @@ export default function UploadPage() {
     };
   }, [busy, files.length]);
 
+  useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
+
+  useEffect(() => {
+    return () => {
+      if (draftSyncTimeoutRef.current) {
+        window.clearTimeout(draftSyncTimeoutRef.current);
+      }
+    };
+  }, []);
+
   function rememberSession(nextSession) {
     sessionIdRef.current = nextSession?.id || null;
     setSession(nextSession);
@@ -152,13 +181,33 @@ export default function UploadPage() {
     setTelemetry({ speed, eta });
   }, [startedAt, totals.totalBytes, totals.uploadedBytes]);
 
-  function updateQueue(updater) {
+  function persistDraftSnapshot(nextQueue) {
+    if (!sessionIdRef.current) return;
+    const draft = toDraft(sessionIdRef.current, nextQueue);
+    writeDraft(draft);
+    setResumeDraft(draft);
+  }
+
+  function scheduleDraftSync() {
+    if (!sessionIdRef.current || draftSyncTimeoutRef.current) return;
+    draftSyncTimeoutRef.current = window.setTimeout(() => {
+      draftSyncTimeoutRef.current = null;
+      persistDraftSnapshot(queueRef.current);
+    }, DRAFT_SYNC_DELAY_MS);
+  }
+
+  function updateQueue(updater, { persist = "deferred" } = {}) {
     setQueue((current) => {
       const next = updater(current);
-      if (sessionIdRef.current) {
-        const draft = toDraft(sessionIdRef.current, next);
-        writeDraft(draft);
-        setResumeDraft(draft);
+      queueRef.current = next;
+      if (persist === "immediate") {
+        if (draftSyncTimeoutRef.current) {
+          window.clearTimeout(draftSyncTimeoutRef.current);
+          draftSyncTimeoutRef.current = null;
+        }
+        persistDraftSnapshot(next);
+      } else if (persist === "deferred") {
+        scheduleDraftSync();
       }
       return next;
     });
@@ -168,8 +217,10 @@ export default function UploadPage() {
     const nextFiles = Array.from(list || []);
     const draft = readDraft();
     const matchingDraft = sameSignatureSet(nextFiles, draft) ? draft : null;
+    const nextQueue = queueFromFiles(nextFiles, matchingDraft, preferredChunkSize);
     setFiles(nextFiles);
-    setQueue(queueFromFiles(nextFiles, matchingDraft));
+    queueRef.current = nextQueue;
+    setQueue(nextQueue);
     setError("");
     setNetworkMessage(
       matchingDraft
@@ -198,7 +249,7 @@ export default function UploadPage() {
       },
     });
     rememberSession(response.item);
-    const freshDraft = toDraft(response.item.id, queue);
+    const freshDraft = toDraft(response.item.id, queueRef.current);
     writeDraft(freshDraft);
     setResumeDraft(freshDraft);
     return response.item.id;
@@ -218,19 +269,21 @@ export default function UploadPage() {
       },
     });
     const item = response.item;
-    updateQueue((current) =>
-      current.map((candidate) =>
-        candidate.signature === entry.signature
-          ? {
-              ...candidate,
-              fileId: item.id,
-              uploadedBytes: item.uploadedBytes,
-              progress: item.sizeBytes ? item.uploadedBytes / item.sizeBytes : 0,
-              status: item.status === "uploaded" ? "uploaded" : candidate.status,
-              error: "",
-            }
-          : candidate
-      )
+    updateQueue(
+      (current) =>
+        current.map((candidate) =>
+          candidate.signature === entry.signature
+            ? {
+                ...candidate,
+                fileId: item.id,
+                uploadedBytes: item.uploadedBytes,
+                progress: item.sizeBytes ? item.uploadedBytes / item.sizeBytes : 0,
+                status: item.status === "uploaded" ? "uploaded" : candidate.status,
+                error: "",
+              }
+            : candidate
+        ),
+      { persist: "immediate" }
     );
     if (response.batch) {
       rememberSession(response.batch);
@@ -242,22 +295,26 @@ export default function UploadPage() {
     const synced = await syncServerFile(batchId, entry);
     let offset = synced.uploadedBytes || 0;
     if (offset >= entry.size) {
-      updateQueue((current) =>
-        current.map((candidate) =>
-          candidate.signature === entry.signature
-            ? { ...candidate, fileId: synced.id, uploadedBytes: entry.size, progress: 1, status: "uploaded" }
-            : candidate
-        )
+      updateQueue(
+        (current) =>
+          current.map((candidate) =>
+            candidate.signature === entry.signature
+              ? { ...candidate, fileId: synced.id, uploadedBytes: entry.size, progress: 1, status: "uploaded" }
+              : candidate
+          ),
+        { persist: "immediate" }
       );
       return synced.id;
     }
 
-    updateQueue((current) =>
-      current.map((candidate) =>
-        candidate.signature === entry.signature
-          ? { ...candidate, fileId: synced.id, status: "uploading", error: "" }
-          : candidate
-      )
+    updateQueue(
+      (current) =>
+        current.map((candidate) =>
+          candidate.signature === entry.signature
+            ? { ...candidate, fileId: synced.id, status: "uploading", error: "" }
+            : candidate
+        ),
+      { persist: "immediate" }
     );
 
     while (offset < entry.size) {
@@ -277,17 +334,24 @@ export default function UploadPage() {
             "X-Chunk-Index": Math.floor(offset / entry.chunkSize),
           },
           onProgress: (loaded) => {
-            updateQueue((current) =>
-              current.map((candidate) =>
-                candidate.signature === entry.signature
-                  ? {
-                      ...candidate,
-                      uploadedBytes: Math.min(offset + loaded, entry.size),
-                      progress: Math.min((offset + loaded) / entry.size, 1),
-                      status: "uploading",
-                    }
-                  : candidate
-              )
+            const now = Date.now();
+            if (loaded < chunk.size && now - lastProgressUpdateRef.current < PROGRESS_REFRESH_MS) {
+              return;
+            }
+            lastProgressUpdateRef.current = now;
+            updateQueue(
+              (current) =>
+                current.map((candidate) =>
+                  candidate.signature === entry.signature
+                    ? {
+                        ...candidate,
+                        uploadedBytes: Math.min(offset + loaded, entry.size),
+                        progress: Math.min((offset + loaded) / entry.size, 1),
+                        status: "uploading",
+                      }
+                    : candidate
+                ),
+              { persist: "none" }
             );
           },
         });
@@ -295,19 +359,21 @@ export default function UploadPage() {
         if (response.batch) {
           rememberSession(response.batch);
         }
-        updateQueue((current) =>
-          current.map((candidate) =>
-            candidate.signature === entry.signature
-              ? {
-                  ...candidate,
-                  fileId: response.item.id,
-                  uploadedBytes: response.item.uploadedBytes,
-                  progress: entry.size ? response.item.uploadedBytes / entry.size : 1,
-                  status: response.item.status === "uploaded" ? "uploaded" : "uploading",
-                  error: "",
-                }
-              : candidate
-          )
+        updateQueue(
+          (current) =>
+            current.map((candidate) =>
+              candidate.signature === entry.signature
+                ? {
+                    ...candidate,
+                    fileId: response.item.id,
+                    uploadedBytes: response.item.uploadedBytes,
+                    progress: entry.size ? response.item.uploadedBytes / entry.size : 1,
+                    status: response.item.status === "uploaded" ? "uploaded" : "uploading",
+                    error: "",
+                  }
+                : candidate
+            ),
+          { persist: "immediate" }
         );
       } catch (chunkError) {
         if (chunkError.status === 409 && chunkError.payload?.expectedStartByte !== undefined) {
@@ -320,12 +386,14 @@ export default function UploadPage() {
     }
 
     await apiFetch(`/uploads/${batchId}/files/${synced.id}/finalize`, { method: "POST" });
-    updateQueue((current) =>
-      current.map((candidate) =>
-        candidate.signature === entry.signature
-          ? { ...candidate, uploadedBytes: entry.size, progress: 1, status: "uploaded", error: "" }
-          : candidate
-      )
+    updateQueue(
+      (current) =>
+        current.map((candidate) =>
+          candidate.signature === entry.signature
+            ? { ...candidate, uploadedBytes: entry.size, progress: 1, status: "uploaded", error: "" }
+            : candidate
+        ),
+      { persist: "immediate" }
     );
     return synced.id;
   }
@@ -361,7 +429,10 @@ export default function UploadPage() {
         rememberSession(loadedBatch.item);
       }
 
-      for (const entry of queueFromFiles(files, readDraft())) {
+      lastProgressUpdateRef.current = 0;
+      const entries =
+        queueRef.current.length ? queueRef.current : queueFromFiles(files, readDraft(), preferredChunkSize);
+      for (const entry of entries) {
         await uploadEntry(batchId, entry);
       }
 
@@ -379,16 +450,18 @@ export default function UploadPage() {
         /network/i.test(submitError.message) ||
         !navigator.onLine;
       resumeOnReconnectRef.current = isNetworkIssue;
-      updateQueue((current) =>
-        current.map((entry) =>
-          entry.status === "uploading"
-            ? {
-                ...entry,
-                status: isNetworkIssue ? "paused" : "failed",
-                error: submitError.message,
-              }
-            : entry
-        )
+      updateQueue(
+        (current) =>
+          current.map((entry) =>
+            entry.status === "uploading"
+              ? {
+                  ...entry,
+                  status: isNetworkIssue ? "paused" : "failed",
+                  error: submitError.message,
+                }
+              : entry
+          ),
+        { persist: "immediate" }
       );
       setError(
         isNetworkIssue
@@ -406,10 +479,12 @@ export default function UploadPage() {
   }
 
   function resetDraft() {
+    const nextQueue = queueFromFiles(files, null, preferredChunkSize);
     writeDraft(null);
     setResumeDraft(null);
     rememberSession(null);
-    setQueue(queueFromFiles(files, null));
+    queueRef.current = nextQueue;
+    setQueue(nextQueue);
     setNetworkMessage("");
     setError("");
     resumeOnReconnectRef.current = false;
