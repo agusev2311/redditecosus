@@ -6,6 +6,12 @@ from ..auth import auth_required, get_current_user
 from ..extensions import db
 from ..models import Tag
 from ..services.serializers import serialize_tag
+from ..services.tag_styles import (
+    encode_gradient_colors,
+    normalize_color,
+    normalize_gradient_angle,
+    normalize_gradient_colors,
+)
 from ..utils import slugify
 
 bp = Blueprint("tags", __name__)
@@ -39,13 +45,22 @@ def create_tag():
     name = (payload.get("name") or "").strip()
     if not name:
         return jsonify({"error": "Tag name is required"}), 400
+    gradient_colors = normalize_gradient_colors(
+        payload.get("gradientColors"),
+        fallback_start=payload.get("colorStart"),
+        fallback_end=payload.get("colorEnd"),
+    )
+    color_start = normalize_color(payload.get("colorStart"), gradient_colors[0]) or gradient_colors[0]
+    color_end = normalize_color(payload.get("colorEnd"), gradient_colors[-1]) or gradient_colors[-1]
     tag = Tag(
         name=name,
         slug=_unique_slug(name),
         description=payload.get("description"),
         style_mode=payload.get("styleMode") or "gradient",
-        color_start=payload.get("colorStart") or "#7c3aed",
-        color_end=payload.get("colorEnd") or "#10b981",
+        color_start=color_start,
+        color_end=color_end,
+        gradient_colors=encode_gradient_colors(gradient_colors),
+        gradient_angle=normalize_gradient_angle(payload.get("gradientAngle")),
         text_color=payload.get("textColor") or "#f8fafc",
         avatar_url=payload.get("avatarUrl"),
         created_by_id=get_current_user().id,
@@ -67,10 +82,17 @@ def update_tag(tag_id: int):
         tag.description = payload["description"]
     if "styleMode" in payload:
         tag.style_mode = payload["styleMode"]
-    if "colorStart" in payload:
-        tag.color_start = payload["colorStart"]
-    if "colorEnd" in payload:
-        tag.color_end = payload["colorEnd"]
+    if {"colorStart", "colorEnd", "gradientColors"} & payload.keys():
+        gradient_colors = normalize_gradient_colors(
+            payload.get("gradientColors", tag.gradient_colors),
+            fallback_start=payload.get("colorStart", tag.color_start),
+            fallback_end=payload.get("colorEnd", tag.color_end),
+        )
+        tag.color_start = normalize_color(payload.get("colorStart"), gradient_colors[0]) or gradient_colors[0]
+        tag.color_end = normalize_color(payload.get("colorEnd"), gradient_colors[-1]) or gradient_colors[-1]
+        tag.gradient_colors = encode_gradient_colors(gradient_colors)
+    if "gradientAngle" in payload:
+        tag.gradient_angle = normalize_gradient_angle(payload["gradientAngle"])
     if "textColor" in payload:
         tag.text_color = payload["textColor"]
     if "avatarUrl" in payload:

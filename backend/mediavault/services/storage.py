@@ -4,6 +4,8 @@ import hashlib
 import mimetypes
 import os
 import struct
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
@@ -141,6 +143,31 @@ def iter_storage_chunks(relative_path: str, encrypted: bool) -> Iterator[bytes]:
         yield from iter_decrypted_chunks(absolute)
     else:
         yield from iter_plain_chunks(absolute)
+
+
+@contextmanager
+def materialize_storage_path(relative_path: str, encrypted: bool):
+    from flask import current_app
+
+    absolute = Path(current_app.config["DATA_ROOT"]) / relative_path
+    if not encrypted:
+        yield absolute
+        return
+
+    suffix = "".join(Path(relative_path).suffixes) or ".bin"
+    temp_file = tempfile.NamedTemporaryFile(
+        delete=False,
+        dir=current_app.config["IMPORTS_ROOT"],
+        suffix=suffix,
+    )
+    temp_path = Path(temp_file.name)
+    try:
+        with temp_file:
+            for chunk in iter_storage_chunks(relative_path, encrypted):
+                temp_file.write(chunk)
+        yield temp_path
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def save_uploaded_stream(file_storage, destination: Path) -> int:

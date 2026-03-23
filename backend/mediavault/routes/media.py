@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import random
+
 from flask import Blueprint, jsonify, request
 from sqlalchemy import func, or_
 
 from ..auth import auth_required, get_current_user
 from ..extensions import db
 from ..models import MediaItem, Tag
+from ..services.media_similarity import (
+    DEFAULT_SIMILARITY_THRESHOLD,
+    build_similar_duplicate_groups,
+    ensure_perceptual_hashes,
+)
 from ..services.serializers import serialize_media, serialize_tag
 from ..services.storage import (
     build_streaming_response,
@@ -26,6 +33,19 @@ def _query():
 
 def _get_accessible(media_id: int):
     return _query().filter_by(id=media_id).first_or_404()
+
+
+def _pick_random_review_candidate(query, exclude_id: int | None = None):
+    scoped = query
+    if exclude_id is not None:
+        scoped = scoped.filter(MediaItem.id != exclude_id)
+    candidate_ids = [row[0] for row in scoped.with_entities(MediaItem.id).all()]
+    if not candidate_ids and exclude_id is not None:
+        candidate_ids = [row[0] for row in query.with_entities(MediaItem.id).all()]
+    if not candidate_ids:
+        return None
+    chosen_id = random.choice(candidate_ids)
+    return _query().filter_by(id=chosen_id).first()
 
 
 def _delete_media_item(item: MediaItem) -> None:
@@ -101,14 +121,11 @@ def list_media():
 @auth_required()
 def next_review_item():
     only_untagged = request.args.get("untagged", "1") == "1"
-    after_id = request.args.get("afterId", type=int)
-    query = _query().order_by(MediaItem.id.asc())
+    after_id = request.args.get("afterId", type=int) or request.args.get("excludeId", type=int)
+    query = _query()
     if only_untagged:
         query = query.filter(~MediaItem.tags.any())
-    if after_id:
-        candidate = query.filter(MediaItem.id > after_id).first()
-    else:
-        candidate = query.first()
+    candidate = _pick_random_review_candidate(query, exclude_id=after_id)
     return jsonify(
         {
             "item": serialize_media(candidate) if candidate else None,
@@ -120,13 +137,47 @@ def next_review_item():
 @bp.get("/duplicates")
 @auth_required()
 def duplicates():
+    mode = (request.args.get("mode") or "exact").strip().lower()
+    limit = min(max(request.args.get("limit", type=int) or 100, 1), 200)
+    threshold = max(
+        50,
+        min(100, request.args.get("threshold", type=int) or DEFAULT_SIMILARITY_THRESHOLD),
+    )
+
+    if mode == "similar":
+        items = _query().order_by(MediaItem.created_at.asc(), MediaItem.id.asc()).all()
+        ensure_perceptual_hashes(items)
+        groups = build_similar_duplicate_groups(items, threshold_percent=threshold, max_groups=limit)
+        return jsonify(
+            {
+                "mode": "similar",
+                "thresholdPercent": threshold,
+                "items": [
+                    {
+                        "key": group["key"],
+                        "mode": "similar",
+                        "count": group["count"],
+                        "similarityPercent": group["similarityPercent"],
+                        "items": [
+                            {
+                                **serialize_media(entry["item"]),
+                                "matchPercent": entry["matchPercent"],
+                            }
+                            for entry in group["items"]
+                        ],
+                    }
+                    for group in groups
+                ],
+            }
+        )
+
     rows = (
         _query()
         .with_entities(MediaItem.sha256_hash, func.count(MediaItem.id))
         .group_by(MediaItem.sha256_hash)
         .having(func.count(MediaItem.id) > 1)
         .order_by(func.count(MediaItem.id).desc())
-        .limit(100)
+        .limit(limit)
         .all()
     )
     groups = []
@@ -134,12 +185,30 @@ def duplicates():
         items = _query().filter_by(sha256_hash=hash_value).order_by(MediaItem.created_at.asc()).all()
         groups.append(
             {
+                "key": f"exact-{hash_value}",
+                "mode": "exact",
                 "sha256Hash": hash_value,
                 "count": count,
-                "items": [serialize_media(item) for item in items],
+                "similarityPercent": 100,
+                "items": [{**serialize_media(item), "matchPercent": 100} for item in items],
             }
         )
-    return jsonify({"items": groups})
+    return jsonify({"mode": "exact", "thresholdPercent": 100, "items": groups})
+
+
+@bp.post("/duplicates/resolve")
+@auth_required()
+def resolve_duplicates_by_ids():
+    payload = request.get_json(force=True) or {}
+    delete_ids = sorted({int(raw) for raw in payload.get("deleteIds", [])})
+    removed = 0
+    for item_id in delete_ids:
+        item = _query().filter_by(id=item_id).first()
+        if not item:
+            continue
+        _delete_media_item(item)
+        removed += 1
+    return jsonify({"removed": removed})
 
 
 @bp.post("/duplicates/<string:hash_value>/resolve")

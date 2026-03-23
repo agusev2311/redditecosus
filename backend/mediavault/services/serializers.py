@@ -7,6 +7,7 @@ from flask import current_app, url_for
 from ..auth import extract_request_token
 
 from ..models import UploadFile
+from .tag_styles import decode_gradient_colors
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -42,6 +43,12 @@ def serialize_tag(tag):
         "styleMode": tag.style_mode,
         "colorStart": tag.color_start,
         "colorEnd": tag.color_end,
+        "gradientColors": decode_gradient_colors(
+            tag.gradient_colors,
+            fallback_start=tag.color_start,
+            fallback_end=tag.color_end,
+        ),
+        "gradientAngle": tag.gradient_angle or 135,
         "textColor": tag.text_color,
         "avatarUrl": tag.avatar_url,
         "createdAt": _iso(tag.created_at),
@@ -62,6 +69,7 @@ def serialize_media(item):
         "height": item.height,
         "durationSeconds": item.duration_seconds,
         "sha256Hash": item.sha256_hash,
+        "perceptualHash": item.perceptual_hash,
         "note": item.note,
         "isDuplicate": item.is_duplicate,
         "canonicalMediaId": canonical.id if canonical else item.id,

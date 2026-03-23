@@ -6,6 +6,10 @@ from ..extensions import db
 
 
 SQLITE_COLUMN_MIGRATIONS = {
+    "tag": {
+        "gradient_colors": "TEXT",
+        "gradient_angle": "INTEGER NOT NULL DEFAULT 135",
+    },
     "upload_file": {
         "client_file_id": "TEXT",
         "chunk_size": "INTEGER NOT NULL DEFAULT 0",
@@ -14,6 +18,9 @@ SQLITE_COLUMN_MIGRATIONS = {
         "uploaded_bytes": "BIGINT NOT NULL DEFAULT 0",
         "upload_source": "TEXT NOT NULL DEFAULT 'web'",
         "finalized_at": "DATETIME",
+    },
+    "media_item": {
+        "perceptual_hash": "TEXT",
     }
 }
 

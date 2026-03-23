@@ -12,12 +12,13 @@ from ..extensions import db
 from ..models import ExportJob, MediaItem, Tag, User
 from .settings import get_setting
 from .storage import iter_storage_chunks, store_original, store_preview
+from .tag_styles import decode_gradient_colors
 from .telegram import send_document_chunks
 
 
 def _export_manifest():
     return {
-        "version": 1,
+        "version": 2,
         "exportedAt": datetime.utcnow().isoformat() + "Z",
         "settings": {
             "storage.warning_gb": get_setting("storage.warning_gb"),
@@ -44,6 +45,12 @@ def _export_manifest():
                 "styleMode": tag.style_mode,
                 "colorStart": tag.color_start,
                 "colorEnd": tag.color_end,
+                "gradientColors": decode_gradient_colors(
+                    tag.gradient_colors,
+                    fallback_start=tag.color_start,
+                    fallback_end=tag.color_end,
+                ),
+                "gradientAngle": tag.gradient_angle,
                 "textColor": tag.text_color,
                 "avatarUrl": tag.avatar_url,
             }
@@ -60,6 +67,7 @@ def _export_manifest():
                 "height": item.height,
                 "durationSeconds": item.duration_seconds,
                 "sha256Hash": item.sha256_hash,
+                "perceptualHash": item.perceptual_hash,
                 "note": item.note,
                 "isDuplicate": item.is_duplicate,
                 "canonicalHash": item.canonical_root.sha256_hash,
@@ -154,6 +162,12 @@ def import_export_archive(archive_path: Path) -> dict:
                     style_mode=raw_tag.get("styleMode", "gradient"),
                     color_start=raw_tag.get("colorStart", "#7c3aed"),
                     color_end=raw_tag.get("colorEnd", "#10b981"),
+                    gradient_colors=(
+                        json.dumps(raw_tag.get("gradientColors"), ensure_ascii=False)
+                        if raw_tag.get("gradientColors")
+                        else None
+                    ),
+                    gradient_angle=raw_tag.get("gradientAngle", 135),
                     text_color=raw_tag.get("textColor", "#f8fafc"),
                     avatar_url=raw_tag.get("avatarUrl"),
                 )
@@ -208,6 +222,7 @@ def import_export_archive(archive_path: Path) -> dict:
                 height=raw_media.get("height"),
                 duration_seconds=raw_media.get("durationSeconds"),
                 sha256_hash=raw_media["sha256Hash"],
+                perceptual_hash=raw_media.get("perceptualHash"),
                 note=raw_media.get("note"),
                 is_encrypted=bool(current_app.config["MEDIA_ENCRYPTION_PASSPHRASE"]),
                 is_duplicate=raw_media.get("isDuplicate", False),

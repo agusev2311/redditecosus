@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ..extensions import db
 from ..models import MediaItem, UploadBatch, UploadFile
+from .media_similarity import compute_perceptual_hash
 from .storage import (
     calculate_sha256,
     generate_image_preview,
@@ -65,6 +66,7 @@ def _prepare_media_record(owner_id: int, batch_id: str, original_filename: str, 
             height=existing.height,
             duration_seconds=existing.duration_seconds,
             sha256_hash=sha256_hash,
+            perceptual_hash=existing.perceptual_hash,
             is_encrypted=existing.is_encrypted,
             is_duplicate=True,
             canonical_media_id=existing.id,
@@ -76,10 +78,12 @@ def _prepare_media_record(owner_id: int, batch_id: str, original_filename: str, 
     )
     width = height = None
     preview_path = None
+    perceptual_hash = None
     if media_type == "image":
         width, height = inspect_image_size(source_path)
         preview_temp = Path(tempfile.mkdtemp(dir=current_app.config["IMPORTS_ROOT"])) / f"{sha256_hash}.jpg"
         width, height = generate_image_preview(source_path, preview_temp)
+        perceptual_hash = compute_perceptual_hash(preview_temp) or compute_perceptual_hash(source_path)
         preview_path = store_preview(preview_temp, sha256_hash)
 
     storage_path = store_original(source_path, sha256_hash, original_filename)
@@ -97,6 +101,7 @@ def _prepare_media_record(owner_id: int, batch_id: str, original_filename: str, 
         height=height,
         duration_seconds=None,
         sha256_hash=sha256_hash,
+        perceptual_hash=perceptual_hash,
         is_encrypted=bool(current_app.config["MEDIA_ENCRYPTION_PASSPHRASE"]),
         is_duplicate=False,
     )

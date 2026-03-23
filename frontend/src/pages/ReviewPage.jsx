@@ -86,7 +86,7 @@ export default function ReviewPage() {
           <div>
             <p className="eyebrow">mark mode</p>
             <h1>Быстрая разметка</h1>
-            <p className="muted">Крупный просмотр, быстрый выбор тегов и один жест до следующего файла.</p>
+            <p className="muted">Случайная выдача, крупный центрированный просмотр и один жест до следующего файла.</p>
           </div>
           {item ? (
             <div className="review-stage-stats">
@@ -99,11 +99,13 @@ export default function ReviewPage() {
         {item ? (
           <div className="review-stage-body">
             <div className="review-media review-media-stage">
-              {item.mediaType === "video" ? (
-                <video src={item.fileUrl} controls preload="metadata" />
-              ) : (
-                <img src={item.fileUrl} alt={item.originalFilename} />
-              )}
+              <div className="review-media-frame">
+                {item.mediaType === "video" ? (
+                  <video key={item.id} src={item.fileUrl} controls preload="metadata" />
+                ) : (
+                  <img key={item.id} src={item.fileUrl} alt={item.originalFilename} />
+                )}
+              </div>
             </div>
           </div>
         ) : (

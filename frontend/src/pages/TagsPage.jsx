@@ -2,13 +2,22 @@ import { useEffect, useMemo, useState } from "react";
 
 import { apiFetch } from "../api";
 import TagBadge from "../components/TagBadge";
+import {
+  DEFAULT_GRADIENT_ANGLE,
+  DEFAULT_GRADIENT_COLORS,
+  MAX_GRADIENT_COLORS,
+  buildGradientString,
+  ensureGradientColors,
+} from "../lib/tags";
 
 const emptyForm = {
   name: "",
   description: "",
   styleMode: "gradient",
-  colorStart: "#7c3aed",
-  colorEnd: "#10b981",
+  colorStart: DEFAULT_GRADIENT_COLORS[0],
+  colorEnd: DEFAULT_GRADIENT_COLORS[1],
+  gradientColors: [...DEFAULT_GRADIENT_COLORS],
+  gradientAngle: DEFAULT_GRADIENT_ANGLE,
   textColor: "#f8fafc",
   avatarUrl: "",
 };
@@ -16,28 +25,55 @@ const emptyForm = {
 const presets = [
   {
     label: "Neon",
-    values: { styleMode: "gradient", colorStart: "#7c3aed", colorEnd: "#10b981", textColor: "#f8fafc" },
+    values: {
+      styleMode: "gradient",
+      gradientColors: ["#7c3aed", "#3b82f6", "#10b981"],
+      gradientAngle: 132,
+      textColor: "#f8fafc",
+    },
   },
   {
     label: "Glass",
-    values: { styleMode: "solid", colorStart: "#25314b", colorEnd: "#25314b", textColor: "#f3f6ff" },
+    values: {
+      styleMode: "gradient",
+      gradientColors: ["#8b5cf6", "#60a5fa", "#34d399", "#bef264"],
+      gradientAngle: 118,
+      textColor: "#f8fafc",
+    },
   },
   {
     label: "Signal",
-    values: { styleMode: "gradient", colorStart: "#0f172a", colorEnd: "#16a34a", textColor: "#e6fff2" },
+    values: {
+      styleMode: "gradient",
+      gradientColors: ["#0f172a", "#14532d", "#16a34a"],
+      gradientAngle: 150,
+      textColor: "#e6fff2",
+    },
   },
 ];
 
-function formFromTag(tag) {
+function syncGradientFields(nextForm) {
+  const gradientColors = ensureGradientColors(nextForm);
   return {
+    ...nextForm,
+    gradientColors,
+    colorStart: gradientColors[0],
+    colorEnd: gradientColors[gradientColors.length - 1],
+  };
+}
+
+function formFromTag(tag) {
+  return syncGradientFields({
     name: tag.name || "",
     description: tag.description || "",
     styleMode: tag.styleMode || "gradient",
-    colorStart: tag.colorStart || "#7c3aed",
-    colorEnd: tag.colorEnd || "#10b981",
+    colorStart: tag.colorStart || DEFAULT_GRADIENT_COLORS[0],
+    colorEnd: tag.colorEnd || DEFAULT_GRADIENT_COLORS[1],
+    gradientColors: ensureGradientColors(tag),
+    gradientAngle: tag.gradientAngle ?? DEFAULT_GRADIENT_ANGLE,
     textColor: tag.textColor || "#f8fafc",
     avatarUrl: tag.avatarUrl || "",
-  };
+  });
 }
 
 export default function TagsPage() {
@@ -69,9 +105,10 @@ export default function TagsPage() {
 
   async function submit(event) {
     event.preventDefault();
+    const payload = syncGradientFields(form);
     await apiFetch(editingId ? `/tags/${editingId}` : "/tags", {
       method: editingId ? "PATCH" : "POST",
-      body: form,
+      body: payload,
     });
     await load();
     setEditingId(null);
@@ -92,6 +129,46 @@ export default function TagsPage() {
     setForm(emptyForm);
   }
 
+  function updateForm(updater) {
+    setForm((current) => syncGradientFields(typeof updater === "function" ? updater(current) : updater));
+  }
+
+  function applyPreset(preset) {
+    updateForm((current) => ({ ...current, ...preset.values }));
+  }
+
+  function setGradientStop(index, value) {
+    updateForm((current) => {
+      const nextColors = [...current.gradientColors];
+      nextColors[index] = value;
+      return { ...current, gradientColors: nextColors };
+    });
+  }
+
+  function addGradientStop() {
+    updateForm((current) => {
+      if (current.gradientColors.length >= MAX_GRADIENT_COLORS) {
+        return current;
+      }
+      return {
+        ...current,
+        gradientColors: [...current.gradientColors, current.gradientColors[current.gradientColors.length - 1]],
+      };
+    });
+  }
+
+  function removeGradientStop(index) {
+    updateForm((current) => {
+      if (current.gradientColors.length <= 2) {
+        return current;
+      }
+      return {
+        ...current,
+        gradientColors: current.gradientColors.filter((_, colorIndex) => colorIndex !== index),
+      };
+    });
+  }
+
   return (
     <div className="page-grid tag-studio-layout">
       <form className="glass panel sticky-panel tag-editor" onSubmit={submit}>
@@ -99,7 +176,7 @@ export default function TagsPage() {
           <div>
             <p className="eyebrow">tag studio</p>
             <h1>{editingId ? "Правка тега" : "Новый тег"}</h1>
-            <p className="muted">Сразу видно, как тег будет смотреться в библиотеке и разметке.</p>
+            <p className="muted">Стеклянный бейдж, до 10 цветов в градиенте и точная настройка прямо на месте.</p>
           </div>
           {editingId ? (
             <button type="button" className="ghost-button" onClick={resetEditor}>
@@ -112,18 +189,19 @@ export default function TagsPage() {
           <TagBadge tag={form} active />
           <div className="tag-preview-caption">
             <strong>{form.name || "Ваш тег"}</strong>
-            <p className="muted">{form.description || "Короткое описание или внутренняя заметка для себя."}</p>
+            <p className="muted">{form.description || "Готовый бейдж сразу видно так же, как в библиотеке."}</p>
           </div>
+          <div
+            className="tag-gradient-bar"
+            style={{
+              backgroundImage: buildGradientString(form),
+            }}
+          />
         </div>
 
         <div className="tag-preset-row">
           {presets.map((preset) => (
-            <button
-              key={preset.label}
-              type="button"
-              className="ghost-button"
-              onClick={() => setForm((current) => ({ ...current, ...preset.values }))}
-            >
+            <button key={preset.label} type="button" className="ghost-button" onClick={() => applyPreset(preset)}>
               {preset.label}
             </button>
           ))}
@@ -133,7 +211,7 @@ export default function TagsPage() {
           Название
           <input
             value={form.name}
-            onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+            onChange={(event) => updateForm((current) => ({ ...current, name: event.target.value }))}
             required
           />
         </label>
@@ -143,7 +221,7 @@ export default function TagsPage() {
           <textarea
             rows="3"
             value={form.description}
-            onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
+            onChange={(event) => updateForm((current) => ({ ...current, description: event.target.value }))}
           />
         </label>
 
@@ -157,46 +235,104 @@ export default function TagsPage() {
               key={mode.value}
               type="button"
               className={`ghost-button ${form.styleMode === mode.value ? "active-button" : ""}`}
-              onClick={() => setForm((current) => ({ ...current, styleMode: mode.value }))}
+              onClick={() => updateForm((current) => ({ ...current, styleMode: mode.value }))}
             >
               {mode.label}
             </button>
           ))}
         </div>
 
-        <div className="field-grid">
-          <label>
-            Цвет 1
-            <input
-              type="color"
-              value={form.colorStart}
-              onChange={(event) => setForm((current) => ({ ...current, colorStart: event.target.value }))}
-            />
-          </label>
-          <label>
-            Цвет 2
-            <input
-              type="color"
-              value={form.colorEnd}
-              onChange={(event) => setForm((current) => ({ ...current, colorEnd: event.target.value }))}
-            />
-          </label>
-          <label>
-            Текст
-            <input
-              type="color"
-              value={form.textColor}
-              onChange={(event) => setForm((current) => ({ ...current, textColor: event.target.value }))}
-            />
-          </label>
-        </div>
+        {form.styleMode === "solid" ? (
+          <div className="field-grid">
+            <label>
+              Основной цвет
+              <input
+                type="color"
+                value={form.colorStart}
+                onChange={(event) =>
+                  updateForm((current) => ({
+                    ...current,
+                    colorStart: event.target.value,
+                    gradientColors: [event.target.value, current.colorEnd || event.target.value],
+                  }))
+                }
+              />
+            </label>
+            <label>
+              Текст
+              <input
+                type="color"
+                value={form.textColor}
+                onChange={(event) => updateForm((current) => ({ ...current, textColor: event.target.value }))}
+              />
+            </label>
+          </div>
+        ) : (
+          <div className="tag-gradient-editor">
+            <div className="section-head tag-gradient-head">
+              <div>
+                <h3>Цветовые стопы</h3>
+                <p className="muted">{form.gradientColors.length} / {MAX_GRADIENT_COLORS}</p>
+              </div>
+              <button
+                type="button"
+                className="ghost-button"
+                disabled={form.gradientColors.length >= MAX_GRADIENT_COLORS}
+                onClick={addGradientStop}
+              >
+                Добавить цвет
+              </button>
+            </div>
+
+            <div className="tag-gradient-stop-list">
+              {form.gradientColors.map((color, index) => (
+                <div key={`${color}-${index}`} className="tag-gradient-stop">
+                  <label>
+                    Цвет {index + 1}
+                    <input type="color" value={color} onChange={(event) => setGradientStop(index, event.target.value)} />
+                  </label>
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    disabled={form.gradientColors.length <= 2}
+                    onClick={() => removeGradientStop(index)}
+                  >
+                    Убрать
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <label className="tag-angle-field">
+              Угол градиента: {form.gradientAngle}°
+              <input
+                type="range"
+                min="0"
+                max="360"
+                value={form.gradientAngle}
+                onChange={(event) =>
+                  updateForm((current) => ({ ...current, gradientAngle: Number(event.target.value) }))
+                }
+              />
+            </label>
+
+            <label>
+              Текст
+              <input
+                type="color"
+                value={form.textColor}
+                onChange={(event) => updateForm((current) => ({ ...current, textColor: event.target.value }))}
+              />
+            </label>
+          </div>
+        )}
 
         <label>
           URL аватарки
           <input
             placeholder="https://..."
             value={form.avatarUrl}
-            onChange={(event) => setForm((current) => ({ ...current, avatarUrl: event.target.value }))}
+            onChange={(event) => updateForm((current) => ({ ...current, avatarUrl: event.target.value }))}
           />
         </label>
 
@@ -227,7 +363,12 @@ export default function TagsPage() {
           {filteredItems.map((tag) => (
             <article key={tag.id} className="tag-gallery-card">
               <div className="tag-gallery-top">
-                <TagBadge tag={tag} />
+                <div className="tag-gallery-chip-stack">
+                  <TagBadge tag={tag} />
+                  <p className="muted">
+                    {ensureGradientColors(tag).length} цвета • угол {tag.gradientAngle ?? DEFAULT_GRADIENT_ANGLE}°
+                  </p>
+                </div>
                 <div className="tag-gallery-actions">
                   <button
                     type="button"

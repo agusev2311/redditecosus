@@ -65,7 +65,7 @@ export default function DashboardPage() {
         style={
           heroMedia
             ? {
-                backgroundImage: `linear-gradient(135deg, rgba(6, 10, 18, 0.78), rgba(8, 20, 16, 0.72)), url(${heroMedia.previewUrl})`,
+                backgroundImage: `var(--hero-overlay), url(${heroMedia.previewUrl})`,
               }
             : undefined
         }
