@@ -96,9 +96,16 @@ def serialize_batch(batch, include_files: bool = True):
                 "id": file.id,
                 "originalFilename": file.original_filename,
                 "sizeBytes": file.size_bytes,
+                "chunkSize": file.chunk_size,
+                "totalChunks": file.total_chunks,
+                "uploadedChunks": file.uploaded_chunks,
+                "uploadedBytes": file.uploaded_bytes,
                 "mimeType": file.mime_type,
+                "clientFileId": file.client_file_id,
+                "uploadSource": file.upload_source,
                 "status": file.status,
                 "errorMessage": file.error_message,
+                "finalizedAt": _iso(file.finalized_at),
                 "createdAt": _iso(file.created_at),
             }
             for file in files

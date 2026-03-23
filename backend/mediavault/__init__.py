@@ -6,6 +6,7 @@ from flask_cors import CORS
 from .config import Config
 from .extensions import db
 from .services.jobs import start_background_services
+from .services.schema import ensure_sqlite_schema
 from .services.settings import seed_default_settings
 from .services.storage import ensure_storage_tree
 
@@ -69,6 +70,7 @@ def create_app() -> Flask:
     with app.app_context():
         ensure_storage_tree()
         db.create_all()
+        ensure_sqlite_schema()
         seed_default_settings(app)
         start_background_services(app)
 

@@ -44,6 +44,15 @@ class Config:
     TELEGRAM_CHUNK_BYTES = int(
         os.getenv("MEDIAHUB_TELEGRAM_CHUNK_BYTES", str(48 * 1024 * 1024))
     )
+    TELEGRAM_POLL_TIMEOUT_SECONDS = int(
+        os.getenv("MEDIAHUB_TELEGRAM_POLL_TIMEOUT_SECONDS", "25")
+    )
+    TELEGRAM_POLL_IDLE_SECONDS = int(
+        os.getenv("MEDIAHUB_TELEGRAM_POLL_IDLE_SECONDS", "5")
+    )
+    RESUMABLE_UPLOAD_CHUNK_BYTES = int(
+        os.getenv("MEDIAHUB_RESUMABLE_UPLOAD_CHUNK_BYTES", str(4 * 1024 * 1024))
+    )
 
     EXPORT_INCLUDE_PASSWORD_HASHES = (
         os.getenv("MEDIAHUB_EXPORT_INCLUDE_PASSWORD_HASHES", "true").lower() == "true"

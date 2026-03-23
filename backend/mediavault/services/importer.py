@@ -23,7 +23,12 @@ from .storage import (
 
 
 def _batch_file_rows(batch_id: str):
-    return UploadFile.query.filter_by(batch_id=batch_id).order_by(UploadFile.created_at.asc()).all()
+    return (
+        UploadFile.query.filter(UploadFile.batch_id == batch_id)
+        .filter(UploadFile.status.in_(("uploaded", "completed")))
+        .order_by(UploadFile.created_at.asc())
+        .all()
+    )
 
 
 def _canonical_for_hash(hash_hex: str):

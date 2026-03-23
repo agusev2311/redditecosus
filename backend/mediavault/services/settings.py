@@ -43,6 +43,8 @@ def seed_default_settings(app) -> None:
         "telegram.chat_id": "",
         "telegram.auto_backup_enabled": "false",
         "telegram.auto_disk_alerts": "true",
+        "telegram.polling_enabled": "true",
+        "telegram.last_update_id": "0",
     }
     changed = False
     for key, value in defaults.items():

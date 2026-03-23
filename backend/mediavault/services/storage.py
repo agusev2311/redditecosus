@@ -153,6 +153,18 @@ def save_uploaded_stream(file_storage, destination: Path) -> int:
     return total
 
 
+def append_upload_chunk(destination: Path, start_byte: int, payload: bytes) -> tuple[int, int]:
+    ensure_parent(destination)
+    mode = "r+b" if destination.exists() else "wb"
+    with destination.open(mode) as handle:
+        handle.seek(0, os.SEEK_END)
+        current_size = handle.tell()
+        if current_size != start_byte:
+            return current_size, current_size
+        handle.write(payload)
+        return current_size, handle.tell()
+
+
 def store_original(temp_path: Path, hash_hex: str, original_filename: str) -> str:
     from flask import current_app
 

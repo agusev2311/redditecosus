@@ -41,6 +41,7 @@ def settings():
             "telegramChatId": get_setting("telegram.chat_id") or "",
             "telegramAutoBackupEnabled": get_bool_setting("telegram.auto_backup_enabled", False),
             "telegramAutoDiskAlerts": get_bool_setting("telegram.auto_disk_alerts", True),
+            "telegramPollingEnabled": get_bool_setting("telegram.polling_enabled", True),
             "encryptionEnabled": bool(current_app.config["MEDIA_ENCRYPTION_PASSPHRASE"]),
         }
     )
@@ -62,6 +63,8 @@ def update_settings():
         set_setting("telegram.auto_backup_enabled", payload["telegramAutoBackupEnabled"])
     if "telegramAutoDiskAlerts" in payload:
         set_setting("telegram.auto_disk_alerts", payload["telegramAutoDiskAlerts"])
+    if "telegramPollingEnabled" in payload:
+        set_setting("telegram.polling_enabled", payload["telegramPollingEnabled"])
     db.session.commit()
     return jsonify({"ok": True})
 

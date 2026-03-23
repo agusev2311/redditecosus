@@ -110,6 +110,28 @@ export default function SettingsPage() {
                   }
                 />
               </label>
+              <label>
+                Telegram polling
+                <select
+                  value={settings.telegramPollingEnabled ? "true" : "false"}
+                  onChange={(event) =>
+                    setSettings((current) => ({
+                      ...current,
+                      telegramPollingEnabled: event.target.value === "true",
+                    }))
+                  }
+                >
+                  <option value="true">Включён</option>
+                  <option value="false">Выключен</option>
+                </select>
+              </label>
+            </div>
+            <div className="panel-block">
+              <h3>Telegram bot</h3>
+              <p className="muted">
+                После сохранения бот отвечает на <code>/start</code> и может принимать архивы
+                документом из чата с указанным <code>chat_id</code>.
+              </p>
             </div>
             <div className="button-row">
               <button type="button" className="primary-button" disabled={busy} onClick={save}>

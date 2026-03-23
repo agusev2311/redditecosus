@@ -9,7 +9,7 @@ from ..models import AlertState
 from .export_import import process_export_job
 from .importer import process_batch
 from .metrics import evaluate_disk_alert
-from .telegram import maybe_send_disk_alert
+from .telegram import maybe_send_disk_alert, poll_once
 
 
 def launch_batch_job(app, batch_id: str) -> None:
@@ -39,6 +39,7 @@ def start_background_services(app) -> None:
         return
     app.extensions["mediahub_background_services_started"] = True
     threading.Thread(target=_monitor_loop, args=(app,), daemon=True).start()
+    threading.Thread(target=_telegram_loop, args=(app,), daemon=True).start()
 
 
 def _monitor_loop(app) -> None:
@@ -56,3 +57,14 @@ def _monitor_loop(app) -> None:
             state.is_active = alert["active"]
             db.session.commit()
         time.sleep(app.config["MONITOR_POLL_SECONDS"])
+
+
+def _telegram_loop(app) -> None:
+    while True:
+        with app.app_context():
+            try:
+                poll_once()
+            except Exception as exc:
+                app.logger.warning("Telegram polling failed: %s", exc)
+                db.session.rollback()
+                time.sleep(app.config["TELEGRAM_POLL_IDLE_SECONDS"])

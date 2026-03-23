@@ -50,10 +50,13 @@ export default function DashboardPage() {
     return () => window.clearInterval(timer);
   }, [recentMedia]);
 
-  const heroMedia = useMemo(
-    () => recentMedia.filter((item) => item.mediaType === "image")[heroIndex % Math.max(recentMedia.length, 1)],
-    [heroIndex, recentMedia]
-  );
+  const heroMedia = useMemo(() => {
+    const images = recentMedia.filter((item) => item.mediaType === "image");
+    if (images.length) {
+      return images[heroIndex % images.length];
+    }
+    return recentMedia[0];
+  }, [heroIndex, recentMedia]);
 
   return (
     <div className="page-grid">

@@ -28,6 +28,7 @@ export default function Shell() {
         <div>
           <p className="eyebrow">private media vault</p>
           <h1>MediaHub</h1>
+          <p className="muted">@{user?.username}</p>
         </div>
         <nav className="sidebar-nav">
           {navItems(isAdmin).map((item) => (
@@ -58,6 +59,7 @@ export default function Shell() {
           <div>
             <p className="eyebrow">владелец пространства</p>
             <h2>{user?.displayName}</h2>
+            <p className="muted">@{user?.username}</p>
           </div>
           <div className="status-pill">{isAdmin ? "admin" : "member"}</div>
         </header>

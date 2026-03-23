@@ -77,3 +77,37 @@ export function uploadFileWithProgress(path, file, { token, onProgress }) {
     xhr.send(form);
   });
 }
+
+export function uploadBinaryChunk(path, blob, { token, headers = {}, onProgress }) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", buildApiUrl(path));
+    if (token) {
+      xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    }
+    Object.entries(headers).forEach(([key, value]) => {
+      xhr.setRequestHeader(key, String(value));
+    });
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable) return;
+      onProgress?.(event.loaded, event.total);
+    };
+    xhr.onload = () => {
+      try {
+        const payload = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(payload);
+          return;
+        }
+        const error = new Error(payload.error || `Chunk upload failed with status ${xhr.status}`);
+        error.payload = payload;
+        error.status = xhr.status;
+        reject(error);
+      } catch {
+        reject(new Error("Invalid server response"));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Network error"));
+    xhr.send(blob);
+  });
+}
