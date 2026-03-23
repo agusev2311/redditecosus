@@ -4,19 +4,64 @@ import { apiFetch, getStoredToken, uploadBinaryChunk } from "../api";
 import { formatBytes, formatDuration, formatRate } from "../lib/format";
 
 const DRAFT_KEY = "mediahub_upload_draft_v2";
-const DEFAULT_CHUNK_SIZE = 16 * 1024 * 1024;
+const DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024;
 const DRAFT_SYNC_DELAY_MS = 800;
 const PROGRESS_REFRESH_MS = 120;
+const SPEED_WINDOW_MS = 6000;
+const MAX_PARALLEL_CHUNKS = 4;
 
 function pickChunkSize(fileSize, preferredChunkSize) {
   const base = Math.max(preferredChunkSize || DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_SIZE);
   if (fileSize >= 1024 * 1024 * 1024) {
-    return Math.max(base, 32 * 1024 * 1024);
+    return Math.max(base, 16 * 1024 * 1024);
   }
   if (fileSize >= 256 * 1024 * 1024) {
-    return Math.max(base, 24 * 1024 * 1024);
+    return Math.max(base, 12 * 1024 * 1024);
   }
   return base;
+}
+
+function deriveCompletedChunks(uploadedBytes, size, chunkSize) {
+  if (!uploadedBytes || !size || !chunkSize) {
+    return [];
+  }
+  const cappedBytes = Math.min(uploadedBytes, size);
+  const fullChunks = Math.floor(cappedBytes / chunkSize);
+  const chunks = Array.from({ length: fullChunks }, (_, index) => index);
+  const hasPartialChunk = cappedBytes % chunkSize !== 0 && cappedBytes < size;
+  if (hasPartialChunk) {
+    chunks.push(fullChunks);
+  }
+  if (cappedBytes >= size) {
+    const totalChunks = Math.ceil(size / chunkSize);
+    return Array.from({ length: totalChunks }, (_, index) => index);
+  }
+  return chunks;
+}
+
+function mergeCompletedChunks(...sources) {
+  const merged = new Set();
+  sources.flat().forEach((value) => {
+    if (Number.isInteger(value) && value >= 0) {
+      merged.add(value);
+    }
+  });
+  return [...merged].sort((left, right) => left - right);
+}
+
+function completedBytesFromChunks(completedChunks, size, chunkSize) {
+  if (!size || !chunkSize) {
+    return 0;
+  }
+  const totalChunks = Math.ceil(size / chunkSize);
+  return completedChunks.reduce((sum, chunkIndex) => {
+    if (chunkIndex < 0 || chunkIndex >= totalChunks) {
+      return sum;
+    }
+    const start = chunkIndex * chunkSize;
+    const end = Math.min(start + chunkSize, size);
+    return sum + Math.max(end - start, 0);
+  }, 0);
 }
 
 function fileSignature(file) {
@@ -50,7 +95,15 @@ function queueFromFiles(files, draft, preferredChunkSize = DEFAULT_CHUNK_SIZE) {
   return files.map((file) => {
     const signature = fileSignature(file);
     const saved = draft?.files?.[signature];
-    const uploadedBytes = Math.min(saved?.uploadedBytes || 0, file.size);
+    const chunkSize = saved?.chunkSize || pickChunkSize(file.size, preferredChunkSize);
+    const completedChunks = mergeCompletedChunks(
+      saved?.completedChunks || [],
+      deriveCompletedChunks(saved?.uploadedBytes || 0, file.size, chunkSize)
+    );
+    const uploadedBytes = Math.min(
+      Math.max(saved?.uploadedBytes || 0, completedBytesFromChunks(completedChunks, file.size, chunkSize)),
+      file.size
+    );
     return {
       signature,
       file,
@@ -60,7 +113,8 @@ function queueFromFiles(files, draft, preferredChunkSize = DEFAULT_CHUNK_SIZE) {
       uploadedBytes,
       progress: file.size ? uploadedBytes / file.size : 0,
       status: saved ? saved.status || "paused" : "queued",
-      chunkSize: saved?.chunkSize || pickChunkSize(file.size, preferredChunkSize),
+      chunkSize,
+      completedChunks,
       error: saved?.error || "",
     };
   });
@@ -79,6 +133,7 @@ function toDraft(batchId, queue) {
           fileId: entry.fileId,
           uploadedBytes: entry.uploadedBytes,
           chunkSize: entry.chunkSize,
+          completedChunks: entry.completedChunks || [],
           status: entry.status,
           error: entry.error || "",
         },
@@ -95,6 +150,7 @@ export default function UploadPage() {
   const queueRef = useRef([]);
   const draftSyncTimeoutRef = useRef(null);
   const lastProgressUpdateRef = useRef(0);
+  const speedSamplesRef = useRef([]);
   const [files, setFiles] = useState([]);
   const [session, setSession] = useState(null);
   const [queue, setQueue] = useState([]);
@@ -182,12 +238,27 @@ export default function UploadPage() {
   }
 
   useEffect(() => {
-    if (!startedAt || !totals.uploadedBytes || !totals.totalBytes) {
+    if (!startedAt || !totals.totalBytes) {
+      speedSamplesRef.current = [];
       setTelemetry({ speed: 0, eta: 0 });
       return;
     }
-    const elapsed = Math.max((Date.now() - startedAt) / 1000, 1);
-    const speed = totals.uploadedBytes / elapsed;
+    const now = Date.now();
+    const nextSamples = [
+      ...speedSamplesRef.current.filter((sample) => now - sample.timestamp <= SPEED_WINDOW_MS),
+      { timestamp: now, uploadedBytes: totals.uploadedBytes },
+    ];
+    speedSamplesRef.current = nextSamples;
+    let speed = 0;
+    if (nextSamples.length >= 2) {
+      const first = nextSamples[0];
+      const last = nextSamples[nextSamples.length - 1];
+      const elapsedSeconds = Math.max((last.timestamp - first.timestamp) / 1000, 0.25);
+      speed = Math.max(0, (last.uploadedBytes - first.uploadedBytes) / elapsedSeconds);
+    } else if (totals.uploadedBytes > 0) {
+      const elapsed = Math.max((now - startedAt) / 1000, 1);
+      speed = totals.uploadedBytes / elapsed;
+    }
     const eta = speed ? (totals.totalBytes - totals.uploadedBytes) / speed : 0;
     setTelemetry({ speed, eta });
   }, [startedAt, totals.totalBytes, totals.uploadedBytes]);
@@ -280,6 +351,15 @@ export default function UploadPage() {
       },
     });
     const item = response.item;
+    const completedChunks = mergeCompletedChunks(
+      entry.completedChunks || [],
+      item.receivedChunkIndexes || [],
+      deriveCompletedChunks(item.uploadedBytes || 0, entry.size, entry.chunkSize)
+    );
+    const uploadedBytes = Math.min(
+      Math.max(item.uploadedBytes || 0, completedBytesFromChunks(completedChunks, entry.size, entry.chunkSize)),
+      entry.size
+    );
     updateQueue(
       (current) =>
         current.map((candidate) =>
@@ -287,8 +367,9 @@ export default function UploadPage() {
             ? {
                 ...candidate,
                 fileId: item.id,
-                uploadedBytes: item.uploadedBytes,
-                progress: item.sizeBytes ? item.uploadedBytes / item.sizeBytes : 0,
+                uploadedBytes,
+                progress: entry.size ? uploadedBytes / entry.size : 0,
+                completedChunks,
                 status: item.status === "uploaded" ? "uploaded" : candidate.status,
                 error: "",
               }
@@ -304,13 +385,25 @@ export default function UploadPage() {
 
   async function uploadEntry(batchId, entry) {
     const synced = await syncServerFile(batchId, entry);
-    let offset = synced.uploadedBytes || 0;
-    if (offset >= entry.size) {
+    const totalChunks = Math.ceil(entry.size / entry.chunkSize);
+    let completedChunks = mergeCompletedChunks(
+      entry.completedChunks || [],
+      synced.receivedChunkIndexes || [],
+      deriveCompletedChunks(synced.uploadedBytes || 0, entry.size, entry.chunkSize)
+    );
+    if (completedBytesFromChunks(completedChunks, entry.size, entry.chunkSize) >= entry.size) {
       updateQueue(
         (current) =>
           current.map((candidate) =>
             candidate.signature === entry.signature
-              ? { ...candidate, fileId: synced.id, uploadedBytes: entry.size, progress: 1, status: "uploaded" }
+              ? {
+                  ...candidate,
+                  fileId: synced.id,
+                  uploadedBytes: entry.size,
+                  progress: 1,
+                  completedChunks,
+                  status: "uploaded",
+                }
               : candidate
           ),
         { persist: "immediate" }
@@ -328,21 +421,57 @@ export default function UploadPage() {
       { persist: "immediate" }
     );
 
-    while (offset < entry.size) {
+    const completedSet = new Set(completedChunks);
+    const inFlightProgress = new Map();
+    const pendingChunkIndexes = Array.from({ length: totalChunks }, (_, index) => index).filter(
+      (index) => !completedSet.has(index)
+    );
+    let nextChunkCursor = 0;
+
+    function refreshEntryProgress({ persist = "none", status = "uploading" } = {}) {
+      const committedBytes = completedBytesFromChunks([...completedSet], entry.size, entry.chunkSize);
+      const inflightBytes = [...inFlightProgress.values()].reduce((sum, value) => sum + value, 0);
+      const uploadedBytes = Math.min(committedBytes + inflightBytes, entry.size);
+      const mergedCompletedChunks = [...completedSet].sort((left, right) => left - right);
+      updateQueue(
+        (current) =>
+          current.map((candidate) =>
+            candidate.signature === entry.signature
+              ? {
+                  ...candidate,
+                  fileId: synced.id,
+                  uploadedBytes: Math.max(candidate.uploadedBytes || 0, uploadedBytes),
+                  progress: entry.size ? Math.min(uploadedBytes / entry.size, 1) : 1,
+                  completedChunks: mergedCompletedChunks,
+                  status,
+                  error: "",
+                }
+              : candidate
+          ),
+        { persist }
+      );
+    }
+
+    async function uploadChunkByIndex(chunkIndex) {
       if (!navigator.onLine) {
         const interruption = new Error("Internet connection lost");
         interruption.code = "NETWORK";
         throw interruption;
       }
-      const end = Math.min(offset + entry.chunkSize, entry.size);
-      const chunk = entry.file.slice(offset, end);
+
+      const startByte = chunkIndex * entry.chunkSize;
+      const endByte = Math.min(startByte + entry.chunkSize, entry.size);
+      const chunk = entry.file.slice(startByte, endByte);
+      inFlightProgress.set(chunkIndex, 0);
+      refreshEntryProgress();
+
       try {
         const response = await uploadBinaryChunk(`/uploads/${batchId}/files/${synced.id}/chunk`, chunk, {
           token: getStoredToken(),
           headers: {
             "Content-Type": "application/octet-stream",
-            "X-Start-Byte": offset,
-            "X-Chunk-Index": Math.floor(offset / entry.chunkSize),
+            "X-Start-Byte": startByte,
+            "X-Chunk-Index": chunkIndex,
           },
           onProgress: (loaded) => {
             const now = Date.now();
@@ -350,58 +479,60 @@ export default function UploadPage() {
               return;
             }
             lastProgressUpdateRef.current = now;
-            updateQueue(
-              (current) =>
-                current.map((candidate) =>
-                  candidate.signature === entry.signature
-                    ? {
-                        ...candidate,
-                        uploadedBytes: Math.min(offset + loaded, entry.size),
-                        progress: Math.min((offset + loaded) / entry.size, 1),
-                        status: "uploading",
-                      }
-                    : candidate
-                ),
-              { persist: "none" }
-            );
+            inFlightProgress.set(chunkIndex, loaded);
+            refreshEntryProgress();
           },
         });
-        offset = response.item.uploadedBytes;
+        inFlightProgress.delete(chunkIndex);
+        mergeCompletedChunks([chunkIndex], [...completedSet], response.item.receivedChunkIndexes || []).forEach(
+          (value) => completedSet.add(value)
+        );
         if (response.batch) {
           rememberSession(response.batch);
         }
-        updateQueue(
-          (current) =>
-            current.map((candidate) =>
-              candidate.signature === entry.signature
-                ? {
-                    ...candidate,
-                    fileId: response.item.id,
-                    uploadedBytes: response.item.uploadedBytes,
-                    progress: entry.size ? response.item.uploadedBytes / entry.size : 1,
-                    status: response.item.status === "uploaded" ? "uploaded" : "uploading",
-                    error: "",
-                  }
-                : candidate
-            ),
-          { persist: "immediate" }
-        );
+        refreshEntryProgress({
+          persist: "immediate",
+          status: response.item.status === "uploaded" ? "uploaded" : "uploading",
+        });
       } catch (chunkError) {
+        inFlightProgress.delete(chunkIndex);
         if (chunkError.status === 409 && chunkError.payload?.expectedStartByte !== undefined) {
-          offset = chunkError.payload.expectedStartByte;
-          continue;
+          mergeCompletedChunks(
+            [...completedSet],
+            chunkError.payload?.item?.receivedChunkIndexes || []
+          ).forEach((value) => completedSet.add(value));
+          refreshEntryProgress({ persist: "immediate" });
+          return;
         }
         chunkError.code = chunkError.code || (navigator.onLine ? "UPLOAD" : "NETWORK");
         throw chunkError;
       }
     }
 
+    const workerCount = Math.min(MAX_PARALLEL_CHUNKS, pendingChunkIndexes.length || 1);
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (nextChunkCursor < pendingChunkIndexes.length) {
+          const chunkIndex = pendingChunkIndexes[nextChunkCursor];
+          nextChunkCursor += 1;
+          await uploadChunkByIndex(chunkIndex);
+        }
+      })
+    );
+
     await apiFetch(`/uploads/${batchId}/files/${synced.id}/finalize`, { method: "POST" });
     updateQueue(
       (current) =>
         current.map((candidate) =>
           candidate.signature === entry.signature
-            ? { ...candidate, uploadedBytes: entry.size, progress: 1, status: "uploaded", error: "" }
+            ? {
+                ...candidate,
+                uploadedBytes: entry.size,
+                progress: 1,
+                completedChunks: Array.from({ length: totalChunks }, (_, index) => index),
+                status: "uploaded",
+                error: "",
+              }
             : candidate
         ),
       { persist: "immediate" }
@@ -441,6 +572,7 @@ export default function UploadPage() {
       }
 
       lastProgressUpdateRef.current = 0;
+      speedSamplesRef.current = [];
       const entries =
         queueRef.current.length ? queueRef.current : queueFromFiles(files, readDraft(), preferredChunkSize);
       for (const entry of entries) {
@@ -499,6 +631,8 @@ export default function UploadPage() {
     setNetworkMessage("");
     setError("");
     resumeOnReconnectRef.current = false;
+    speedSamplesRef.current = [];
+    setTelemetry({ speed: 0, eta: 0 });
   }
 
   const resumePossible = queue.some((entry) => entry.status === "paused" || entry.uploadedBytes > 0);

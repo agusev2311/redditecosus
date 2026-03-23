@@ -52,7 +52,7 @@ class Config:
     )
     TELEGRAM_API_BASE_URL = os.getenv("MEDIAHUB_TELEGRAM_API_BASE_URL", "https://api.telegram.org")
     RESUMABLE_UPLOAD_CHUNK_BYTES = int(
-        os.getenv("MEDIAHUB_RESUMABLE_UPLOAD_CHUNK_BYTES", str(16 * 1024 * 1024))
+        os.getenv("MEDIAHUB_RESUMABLE_UPLOAD_CHUNK_BYTES", str(8 * 1024 * 1024))
     )
 
     EXPORT_INCLUDE_PASSWORD_HASHES = (

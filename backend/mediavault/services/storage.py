@@ -153,6 +153,59 @@ def save_uploaded_stream(file_storage, destination: Path) -> int:
     return total
 
 
+def upload_marker_dir(destination: Path) -> Path:
+    return destination.with_name(f"{destination.name}.parts")
+
+
+def collect_upload_chunk_state(
+    destination: Path,
+    chunk_size: int,
+    total_chunks: int,
+    size_bytes: int,
+) -> tuple[list[int], int]:
+    marker_dir = upload_marker_dir(destination)
+    if not marker_dir.exists():
+        actual_size = destination.stat().st_size if destination.exists() else 0
+        if actual_size <= 0 or chunk_size <= 0:
+            return [], 0
+        contiguous_chunks = min(total_chunks or 0, (actual_size + chunk_size - 1) // chunk_size)
+        return list(range(contiguous_chunks)), min(actual_size, size_bytes or actual_size)
+
+    chunk_indexes: list[int] = []
+    uploaded_bytes = 0
+    for marker in marker_dir.iterdir():
+        if not marker.is_file() or marker.suffix != ".part":
+            continue
+        try:
+            chunk_index = int(marker.stem)
+            chunk_bytes = int(marker.read_text(encoding="utf-8").strip() or "0")
+        except (OSError, ValueError):
+            continue
+        if chunk_index < 0:
+            continue
+        chunk_indexes.append(chunk_index)
+        uploaded_bytes += max(chunk_bytes, 0)
+    chunk_indexes.sort()
+    return chunk_indexes, min(uploaded_bytes, size_bytes or uploaded_bytes)
+
+
+def write_upload_chunk(destination: Path, start_byte: int, chunk_index: int, payload: bytes) -> bool:
+    ensure_parent(destination)
+    marker_dir = upload_marker_dir(destination)
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    marker_path = marker_dir / f"{chunk_index}.part"
+    if marker_path.exists():
+        return False
+
+    mode = "r+b" if destination.exists() else "wb"
+    with destination.open(mode) as handle:
+        handle.seek(start_byte)
+        handle.write(payload)
+
+    marker_path.write_text(str(len(payload)), encoding="utf-8")
+    return True
+
+
 def append_upload_chunk(destination: Path, start_byte: int, payload: bytes) -> tuple[int, int]:
     ensure_parent(destination)
     mode = "r+b" if destination.exists() else "wb"

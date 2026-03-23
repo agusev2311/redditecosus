@@ -13,7 +13,7 @@ from ..models import UploadBatch, UploadFile
 from ..services.jobs import launch_batch_job
 from ..services.metrics import evaluate_disk_alert
 from ..services.serializers import serialize_batch
-from ..services.storage import append_upload_chunk, save_uploaded_stream
+from ..services.storage import collect_upload_chunk_state, save_uploaded_stream, write_upload_chunk
 from ..utils import slugify
 
 bp = Blueprint("uploads", __name__)
@@ -55,7 +55,46 @@ def _apply_upload_progress(batch: UploadBatch, upload: UploadFile, uploaded_byte
         batch.uploaded_files = max(0, (batch.uploaded_files or 0) - 1)
 
 
-def _serialize_upload_file(file: UploadFile):
+def _upload_runtime_state(upload: UploadFile) -> tuple[list[int], int]:
+    if upload.total_chunks <= 1:
+        actual_size = Path(upload.temp_path).stat().st_size if Path(upload.temp_path).exists() else 0
+        uploaded_bytes = min(actual_size, upload.size_bytes or actual_size)
+        uploaded_chunks = 1 if uploaded_bytes >= upload.size_bytes and upload.size_bytes > 0 else 0
+        return list(range(uploaded_chunks)), uploaded_bytes
+    return collect_upload_chunk_state(
+        Path(upload.temp_path),
+        upload.chunk_size,
+        upload.total_chunks,
+        upload.size_bytes,
+    )
+
+
+def _sync_upload_from_runtime(batch: UploadBatch, upload: UploadFile) -> list[int]:
+    received_chunk_indexes, uploaded_bytes = _upload_runtime_state(upload)
+    _apply_upload_progress(batch, upload, uploaded_bytes)
+    upload.uploaded_chunks = len(received_chunk_indexes)
+    upload.status = "uploaded" if upload.uploaded_bytes >= upload.size_bytes else "uploading"
+    if upload.status == "uploaded" and not upload.finalized_at:
+        upload.finalized_at = datetime.utcnow()
+    return received_chunk_indexes
+
+
+def _recalculate_batch_from_runtime(batch: UploadBatch, files: list[UploadFile]) -> None:
+    batch.uploaded_bytes = 0
+    batch.uploaded_files = 0
+    for upload in files:
+        received_chunk_indexes, uploaded_bytes = _upload_runtime_state(upload)
+        upload.uploaded_bytes = uploaded_bytes
+        upload.uploaded_chunks = len(received_chunk_indexes)
+        upload.status = "uploaded" if upload.uploaded_bytes >= upload.size_bytes else "uploading"
+        if upload.status == "uploaded":
+            batch.uploaded_files += 1
+            if not upload.finalized_at:
+                upload.finalized_at = datetime.utcnow()
+        batch.uploaded_bytes += upload.uploaded_bytes
+
+
+def _serialize_upload_file(file: UploadFile, received_chunk_indexes: list[int] | None = None):
     return {
         "id": file.id,
         "clientFileId": file.client_file_id,
@@ -69,6 +108,7 @@ def _serialize_upload_file(file: UploadFile):
         "status": file.status,
         "uploadSource": file.upload_source,
         "finalizedAt": file.finalized_at.isoformat() + "Z" if file.finalized_at else None,
+        "receivedChunkIndexes": received_chunk_indexes or [],
     }
 
 
@@ -206,21 +246,14 @@ def sync_upload_file(batch_id: str):
         upload.chunk_size = chunk_size or upload.chunk_size
         upload.total_chunks = total_chunks or upload.total_chunks
 
-    temp_path = Path(upload.temp_path)
-    actual_size = temp_path.stat().st_size if temp_path.exists() else 0
-    if actual_size != upload.uploaded_bytes:
-        _apply_upload_progress(batch, upload, actual_size)
-    if upload.chunk_size > 0 and upload.uploaded_bytes > 0:
-        upload.uploaded_chunks = min(
-            upload.total_chunks or upload.uploaded_chunks,
-            (upload.uploaded_bytes + upload.chunk_size - 1) // upload.chunk_size,
-        )
-    upload.status = "uploaded" if upload.uploaded_bytes >= upload.size_bytes else "uploading"
-    if upload.status == "uploaded" and not upload.finalized_at:
-        upload.finalized_at = datetime.utcnow()
-
+    received_chunk_indexes = _sync_upload_from_runtime(batch, upload)
     db.session.commit()
-    return jsonify({"item": _serialize_upload_file(upload), "batch": serialize_batch(batch, include_files=False)})
+    return jsonify(
+        {
+            "item": _serialize_upload_file(upload, received_chunk_indexes=received_chunk_indexes),
+            "batch": serialize_batch(batch, include_files=False),
+        }
+    )
 
 
 @bp.put("/<string:batch_id>/files/<string:file_id>/chunk")
@@ -236,42 +269,41 @@ def upload_file_chunk(batch_id: str, file_id: str):
 
     start_byte = int(request.headers.get("X-Start-Byte", "0"))
     chunk_index = int(request.headers.get("X-Chunk-Index", "0"))
-    payload = request.get_data(cache=False, as_text=False)
-    if not payload:
+    chunk_payload = request.get_data(cache=False, as_text=False)
+    if not chunk_payload:
         return jsonify({"error": "Missing chunk payload"}), 400
 
-    actual_start, actual_end = append_upload_chunk(Path(upload.temp_path), start_byte, payload)
-    if actual_start != start_byte:
-        _apply_upload_progress(batch, upload, actual_start)
-        if upload.chunk_size > 0:
-            upload.uploaded_chunks = min(
-                upload.total_chunks or upload.uploaded_chunks,
-                (upload.uploaded_bytes + upload.chunk_size - 1) // upload.chunk_size,
-            )
-        db.session.commit()
+    expected_start_byte = chunk_index * max(upload.chunk_size, 1)
+    if start_byte != expected_start_byte:
         return (
             jsonify(
                 {
                     "error": "Chunk offset mismatch",
-                    "item": _serialize_upload_file(upload),
-                    "expectedStartByte": actual_start,
+                    "item": _serialize_upload_file(upload, received_chunk_indexes=_upload_runtime_state(upload)[0]),
+                    "expectedStartByte": expected_start_byte,
                 }
             ),
             409,
         )
 
-    _apply_upload_progress(batch, upload, actual_end)
-    upload.uploaded_chunks = max(upload.uploaded_chunks, chunk_index + 1)
-    upload.status = "uploaded" if upload.uploaded_bytes >= upload.size_bytes else "uploading"
-    if upload.status == "uploaded":
-        upload.finalized_at = datetime.utcnow()
-    payload = {"item": _serialize_upload_file(upload), "batch": serialize_batch(batch, include_files=False)}
-    should_commit = upload.status == "uploaded" or ((chunk_index + 1) % CHUNK_PROGRESS_COMMIT_INTERVAL == 0)
+    if chunk_index < 0 or (upload.total_chunks and chunk_index >= upload.total_chunks):
+        return jsonify({"error": "Chunk index out of range"}), 400
+
+    _sync_upload_from_runtime(batch, upload)
+    write_upload_chunk(Path(upload.temp_path), start_byte, chunk_index, chunk_payload)
+    received_chunk_indexes = _sync_upload_from_runtime(batch, upload)
+    response_payload = {
+        "item": _serialize_upload_file(upload, received_chunk_indexes=received_chunk_indexes),
+        "batch": serialize_batch(batch, include_files=False),
+    }
+    should_commit = upload.status == "uploaded" or (
+        upload.uploaded_chunks > 0 and upload.uploaded_chunks % CHUNK_PROGRESS_COMMIT_INTERVAL == 0
+    )
     if should_commit:
         db.session.commit()
     else:
         db.session.rollback()
-    return jsonify(payload)
+    return jsonify(response_payload)
 
 
 @bp.post("/<string:batch_id>/files/<string:file_id>/finalize")
@@ -279,13 +311,19 @@ def upload_file_chunk(batch_id: str, file_id: str):
 def finalize_upload_file(batch_id: str, file_id: str):
     batch = _batch_scope().filter_by(id=batch_id).first_or_404()
     upload = UploadFile.query.filter_by(batch_id=batch.id, id=file_id).first_or_404()
+    received_chunk_indexes = _sync_upload_from_runtime(batch, upload)
     if upload.uploaded_bytes < upload.size_bytes:
         return jsonify({"error": "File is not fully uploaded"}), 400
     upload.status = "uploaded"
     if not upload.finalized_at:
         upload.finalized_at = datetime.utcnow()
     db.session.commit()
-    return jsonify({"item": _serialize_upload_file(upload), "batch": serialize_batch(batch, include_files=False)})
+    return jsonify(
+        {
+            "item": _serialize_upload_file(upload, received_chunk_indexes=received_chunk_indexes),
+            "batch": serialize_batch(batch, include_files=False),
+        }
+    )
 
 
 @bp.post("/<string:batch_id>/commit")
@@ -297,14 +335,11 @@ def commit_batch(batch_id: str):
     files = UploadFile.query.filter_by(batch_id=batch.id).all()
     if not files:
         return jsonify({"error": "Batch is empty"}), 400
+    _recalculate_batch_from_runtime(batch, files)
     incomplete = [file.original_filename for file in files if file.uploaded_bytes < file.size_bytes]
     if incomplete:
         return jsonify({"error": "Some files are not fully uploaded yet", "items": incomplete[:10]}), 409
     batch.status = "queued"
-    batch.uploaded_files = sum(
-        1 for file in files if file.size_bytes > 0 and file.uploaded_bytes >= file.size_bytes
-    )
-    batch.uploaded_bytes = sum(file.uploaded_bytes for file in files)
     db.session.commit()
     launch_batch_job(current_app._get_current_object(), batch.id)
     return jsonify({"item": serialize_batch(batch)})
