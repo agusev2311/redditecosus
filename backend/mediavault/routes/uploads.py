@@ -187,14 +187,24 @@ def sync_upload_file(batch_id: str):
         )
         db.session.add(upload)
         db.session.flush()
+        state = get_runtime_state(upload, include_received_chunks=True)
     else:
         upload.original_filename = original_filename or upload.original_filename
         upload.mime_type = payload.get("mimeType") or upload.mime_type
-        upload.size_bytes = size_bytes or upload.size_bytes
-        upload.chunk_size = max(chunk_size or upload.chunk_size or 0, 1)
-        upload.total_chunks = max(total_chunks or upload.total_chunks or 0, 1)
+        current_state = get_runtime_state(upload, include_received_chunks=True)
+        has_uploaded_data = (
+            int(current_state.get("uploadedBytes") or 0) > 0
+            or int(current_state.get("uploadedChunks") or 0) > 0
+            or bool(upload.finalized_at)
+        )
+        if has_uploaded_data:
+            state = current_state
+        else:
+            upload.size_bytes = size_bytes or upload.size_bytes
+            upload.chunk_size = max(chunk_size or upload.chunk_size or 0, 1)
+            upload.total_chunks = max(total_chunks or upload.total_chunks or 0, 1)
+            state = get_runtime_state(upload, include_received_chunks=True)
 
-    state = get_runtime_state(upload, include_received_chunks=True)
     sync_upload_model(upload, state)
     _sync_batch(batch)
     db.session.commit()

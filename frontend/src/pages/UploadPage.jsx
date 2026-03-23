@@ -374,13 +374,20 @@ export default function UploadPage() {
       },
     });
     const serverEntry = response.item;
+    const effectiveChunkSize = Math.max(serverEntry.chunkSize || entry.chunkSize || DEFAULT_CHUNK_SIZE, 1);
+    const effectiveTotalChunks = Math.max(
+      serverEntry.totalChunks || Math.ceil(entry.size / effectiveChunkSize) || 1,
+      1
+    );
     const completedChunks = mergeCompletedChunks(
-      entry.completedChunks || [],
       serverEntry.receivedChunkIndexes || [],
-      deriveCompletedChunks(serverEntry.uploadedBytes || 0, entry.size, entry.chunkSize)
+      deriveCompletedChunks(serverEntry.uploadedBytes || 0, entry.size, effectiveChunkSize)
     );
     const uploadedBytes = Math.min(
-      Math.max(serverEntry.uploadedBytes || 0, completedBytesFromChunks(completedChunks, entry.size, entry.chunkSize)),
+      Math.max(
+        serverEntry.uploadedBytes || 0,
+        completedBytesFromChunks(completedChunks, entry.size, effectiveChunkSize)
+      ),
       entry.size
     );
     updateQueue(
@@ -392,6 +399,8 @@ export default function UploadPage() {
                 fileId: serverEntry.id,
                 uploadedBytes,
                 progress: entry.size ? uploadedBytes / entry.size : 0,
+                chunkSize: effectiveChunkSize,
+                totalChunks: effectiveTotalChunks,
                 completedChunks,
                 status: uploadedBytes >= entry.size ? "uploaded" : "uploading",
                 error: "",
@@ -405,10 +414,40 @@ export default function UploadPage() {
     }
     return {
       fileId: serverEntry.id,
+      chunkSize: effectiveChunkSize,
       completedChunks,
       uploadedBytes,
-      totalChunks: entry.totalChunks,
+      totalChunks: effectiveTotalChunks,
     };
+  }
+
+  async function syncQueueEntries(batchId) {
+    const signatures = (queueRef.current || []).map((entry) => entry.signature);
+    if (!signatures.length) {
+      return;
+    }
+
+    let cursor = 0;
+    let syncError = null;
+    const workers = Math.min(MAX_PARALLEL_FILES, signatures.length || 1);
+
+    await Promise.all(
+      Array.from({ length: workers }, async () => {
+        while (!syncError && cursor < signatures.length) {
+          const signature = signatures[cursor];
+          cursor += 1;
+          try {
+            await openRemoteFile(batchId, signature);
+          } catch (errorObject) {
+            syncError = errorObject;
+          }
+        }
+      })
+    );
+
+    if (syncError) {
+      throw syncError;
+    }
   }
 
   async function finalizeRemoteFile(batchId, signature) {
@@ -567,6 +606,20 @@ export default function UploadPage() {
     }
   }
 
+  async function uploadPendingEntries(batchId, signatures) {
+    let cursor = 0;
+    const fileWorkers = Math.min(MAX_PARALLEL_FILES, signatures.length || 1);
+    await Promise.all(
+      Array.from({ length: fileWorkers }, async () => {
+        while (cursor < signatures.length) {
+          const signature = signatures[cursor];
+          cursor += 1;
+          await uploadEntry(batchId, signature);
+        }
+      })
+    );
+  }
+
   async function watchBatch(batchId) {
     const poll = window.setInterval(async () => {
       try {
@@ -600,25 +653,47 @@ export default function UploadPage() {
 
       lastProgressUpdateRef.current = 0;
       speedSamplesRef.current = [];
-      const pendingSignatures = (queueRef.current.length ? queueRef.current : queueFromFiles(files, readDraft(), preferredChunkSize))
-        .filter((entry) => entry.uploadedBytes < entry.size)
+      updateQueue(
+        (current) =>
+          current.map((entry) => ({
+            ...entry,
+            status: entry.uploadedBytes >= entry.size ? entry.status : "uploading",
+            error: "",
+          })),
+        { persist: "deferred" }
+      );
+      await syncQueueEntries(batchId);
+      const pendingSignatures = queueRef.current
+        .filter((entry) => {
+          const completedChunkCount = entry.completedChunks?.length || 0;
+          return entry.uploadedBytes < entry.size || completedChunkCount < entry.totalChunks;
+        })
         .map((entry) => entry.signature);
 
-      let cursor = 0;
-      const fileWorkers = Math.min(MAX_PARALLEL_FILES, pendingSignatures.length || 1);
-      await Promise.all(
-        Array.from({ length: fileWorkers }, async () => {
-          while (cursor < pendingSignatures.length) {
-            const signature = pendingSignatures[cursor];
-            cursor += 1;
-            await uploadEntry(batchId, signature);
-          }
-        })
-      );
+      await uploadPendingEntries(batchId, pendingSignatures);
 
       resumeOnReconnectRef.current = false;
       setNetworkMessage("Все данные загружены новым upload engine. Передаю батч в обработку.");
-      const commit = await apiFetch(`/uploads/${batchId}/commit`, { method: "POST" });
+      let commit;
+      try {
+        commit = await apiFetch(`/uploads/${batchId}/commit`, { method: "POST" });
+      } catch (commitError) {
+        if (!/not fully uploaded/i.test(commitError.message || "")) {
+          throw commitError;
+        }
+        await syncQueueEntries(batchId);
+        const repairSignatures = queueRef.current
+          .filter((entry) => {
+            const completedChunkCount = entry.completedChunks?.length || 0;
+            return entry.uploadedBytes < entry.size || completedChunkCount < entry.totalChunks;
+          })
+          .map((entry) => entry.signature);
+        if (repairSignatures.length) {
+          setNetworkMessage("Сервер нашёл недостающие части. Догружаю только пропущенные куски и повторяю commit.");
+          await uploadPendingEntries(batchId, repairSignatures);
+        }
+        commit = await apiFetch(`/uploads/${batchId}/commit`, { method: "POST" });
+      }
       rememberSession(commit.item);
       writeDraft(null);
       setResumeDraft(null);

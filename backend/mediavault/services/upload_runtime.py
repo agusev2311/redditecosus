@@ -130,13 +130,12 @@ def ensure_runtime(upload: UploadFile) -> dict:
                 handle.truncate(state["totalChunks"])
 
     current_indexes = _read_received_indexes(bitmap_path, state["totalChunks"])
-    if len(current_indexes) != state["uploadedChunks"]:
-        state["uploadedChunks"] = len(current_indexes)
-        if state["chunkSize"] > 0 and state["sizeBytes"] > 0:
-            state["uploadedBytes"] = sum(
-                min(((index + 1) * state["chunkSize"]), state["sizeBytes"]) - (index * state["chunkSize"])
-                for index in current_indexes
-            )
+    state["uploadedChunks"] = len(current_indexes)
+    if state["chunkSize"] > 0 and state["sizeBytes"] > 0:
+        state["uploadedBytes"] = sum(
+            min(((index + 1) * state["chunkSize"]), state["sizeBytes"]) - (index * state["chunkSize"])
+            for index in current_indexes
+        )
     state["updatedAt"] = datetime.utcnow().isoformat() + "Z"
     _write_state(meta_path, state)
     return state
