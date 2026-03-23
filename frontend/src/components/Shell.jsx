@@ -21,17 +21,18 @@ export default function Shell() {
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const isAdmin = user?.role === "admin";
+  const items = navItems(isAdmin);
 
   return (
     <div className="app-shell">
       <aside className="sidebar glass">
-        <div>
+        <div className="sidebar-brand">
           <p className="eyebrow">private media vault</p>
           <h1>MediaHub</h1>
           <p className="muted">@{user?.username}</p>
         </div>
         <nav className="sidebar-nav">
-          {navItems(isAdmin).map((item) => (
+          {items.map((item) => (
             <NavLink key={item.to} to={item.to} end={item.to === "/"}>
               {item.label}
             </NavLink>
@@ -66,6 +67,13 @@ export default function Shell() {
         <div className="page-wrap">
           <Outlet />
         </div>
+        <nav className="mobile-dock glass">
+          {items.map((item) => (
+            <NavLink key={item.to} to={item.to} end={item.to === "/"}>
+              {item.label}
+            </NavLink>
+          ))}
+        </nav>
       </main>
     </div>
   );

@@ -1,9 +1,16 @@
 import { formatBytes } from "../lib/format";
-import TagBadge from "./TagBadge";
 
 export default function MediaCard({ item, onSelect, compact = false }) {
+  const Container = onSelect ? "button" : "article";
+  const tagCountLabel = item.tags?.length ? `${item.tags.length} тег.` : "";
+
   return (
-    <button type="button" className={`media-card ${compact ? "media-card-compact" : ""}`} onClick={() => onSelect?.(item)}>
+    <Container
+      {...(onSelect ? { type: "button", onClick: () => onSelect(item) } : {})}
+      className={`media-card ${compact ? "media-card-compact" : ""}`}
+      title={item.originalFilename}
+      aria-label={item.originalFilename}
+    >
       <div className="media-thumb">
         {item.mediaType === "video" ? (
           <video src={item.previewUrl || item.fileUrl} muted playsInline preload="metadata" />
@@ -12,15 +19,12 @@ export default function MediaCard({ item, onSelect, compact = false }) {
         )}
         {item.isDuplicate ? <span className="card-badge">duplicate</span> : null}
       </div>
-      <div className="media-card-body">
-        <strong title={item.originalFilename}>{item.originalFilename}</strong>
-        <span>{formatBytes(item.sizeBytes)}</span>
-        <div className="tag-row">
-          {item.tags.slice(0, 3).map((tag) => (
-            <TagBadge key={tag.id} tag={tag} />
-          ))}
+      <div className="media-card-overlay">
+        <div className="media-card-chip-row">
+          <span className="media-card-chip">{formatBytes(item.sizeBytes)}</span>
+          {item.tags?.length ? <span className="media-card-chip media-card-chip-soft">{tagCountLabel}</span> : null}
         </div>
       </div>
-    </button>
+    </Container>
   );
 }
