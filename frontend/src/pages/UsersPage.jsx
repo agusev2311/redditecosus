@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { apiFetch } from "../api";
+import { formatBytes } from "../lib/format";
 
 export default function UsersPage() {
   const [items, setItems] = useState([]);
@@ -28,7 +29,7 @@ export default function UsersPage() {
   }
 
   return (
-    <div className="page-grid">
+    <div className="page-grid users-layout">
       <section className="glass panel">
         <div className="section-head">
           <div>
@@ -38,12 +39,18 @@ export default function UsersPage() {
         </div>
         <div className="list-stack">
           {items.map((item) => (
-            <div key={item.id} className="list-row">
-              <div>
+            <div key={item.id} className="list-row list-row-rich">
+              <div className="list-copy">
                 <strong>{item.displayName}</strong>
                 <p className="muted">
                   @{item.username} • {item.role} • {item.isActive ? "active" : "disabled"}
                 </p>
+                <div className="user-metric-strip">
+                  <span className="media-card-chip">{item.mediaCount || 0} файлов</span>
+                  <span className="media-card-chip">{formatBytes(item.uploadedBytes || 0)}</span>
+                  <span className="media-card-chip">{item.batchCount || 0} батчей</span>
+                  <span className="media-card-chip">{item.tagCount || 0} тегов</span>
+                </div>
               </div>
               <div className="button-row">
                 <button
@@ -66,7 +73,7 @@ export default function UsersPage() {
         </div>
       </section>
 
-      <form className="glass panel sticky-panel" onSubmit={create}>
+      <form className="glass panel sticky-panel user-create-panel" onSubmit={create}>
         <p className="eyebrow">invite</p>
         <h2>Новый пользователь</h2>
         <label>

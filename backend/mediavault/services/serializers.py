@@ -7,6 +7,7 @@ from flask import current_app, url_for
 from ..auth import extract_request_token
 
 from ..models import UploadFile
+from .tag_media import resolve_avatar_reference
 from .tag_styles import decode_gradient_colors
 
 
@@ -35,6 +36,7 @@ def serialize_user(user):
 
 
 def serialize_tag(tag):
+    avatar_url, avatar_source_type, avatar_media_id = resolve_avatar_reference(tag.avatar_url, _url_with_token)
     return {
         "id": tag.id,
         "name": tag.name,
@@ -50,7 +52,10 @@ def serialize_tag(tag):
         ),
         "gradientAngle": tag.gradient_angle or 135,
         "textColor": tag.text_color,
-        "avatarUrl": tag.avatar_url,
+        "avatarUrl": avatar_url,
+        "avatarSourceValue": tag.avatar_url,
+        "avatarSourceType": avatar_source_type,
+        "avatarMediaId": avatar_media_id,
         "createdAt": _iso(tag.created_at),
     }
 

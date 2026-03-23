@@ -15,19 +15,11 @@ bp = Blueprint("shares", __name__)
 
 
 def _share_scope():
-    user = get_current_user()
-    query = ShareLink.query
-    if not user.is_admin:
-        query = query.filter_by(created_by_id=user.id)
-    return query
+    return ShareLink.query.filter_by(created_by_id=get_current_user().id)
 
 
 def _media_scope():
-    user = get_current_user()
-    query = MediaItem.query
-    if not user.is_admin:
-        query = query.filter_by(owner_id=user.id)
-    return query
+    return MediaItem.query.filter_by(owner_id=get_current_user().id)
 
 
 def _public_share(token: str):

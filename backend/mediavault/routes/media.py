@@ -19,16 +19,17 @@ from ..services.storage import (
     delete_preview_if_unreferenced,
     delete_storage_if_unreferenced,
 )
+from ..services.tag_media import tag_query_for_user
 
 bp = Blueprint("media", __name__)
 
 
 def _query():
-    user = get_current_user()
-    query = MediaItem.query
-    if not user.is_admin:
-        query = query.filter_by(owner_id=user.id)
-    return query
+    return MediaItem.query.filter_by(owner_id=get_current_user().id)
+
+
+def _tag_scope():
+    return tag_query_for_user(get_current_user())
 
 
 def _get_accessible(media_id: int):
@@ -52,7 +53,11 @@ def _delete_media_item(item: MediaItem) -> None:
     storage_path = item.storage_path
     preview_path = item.preview_path
     same_hash = (
-        MediaItem.query.filter(MediaItem.sha256_hash == item.sha256_hash, MediaItem.id != item.id)
+        MediaItem.query.filter(
+            MediaItem.sha256_hash == item.sha256_hash,
+            MediaItem.owner_id == item.owner_id,
+            MediaItem.id != item.id,
+        )
         .order_by(MediaItem.is_duplicate.asc(), MediaItem.created_at.asc())
         .all()
     )
@@ -129,7 +134,7 @@ def next_review_item():
     return jsonify(
         {
             "item": serialize_media(candidate) if candidate else None,
-            "tags": [serialize_tag(tag) for tag in Tag.query.order_by(Tag.name.asc()).all()],
+            "tags": [serialize_tag(tag) for tag in _tag_scope().order_by(Tag.name.asc()).all()],
         }
     )
 
@@ -240,7 +245,7 @@ def update_media(media_id: int):
         item.note = payload["note"]
     if "tagIds" in payload:
         tag_ids = [int(tag_id) for tag_id in payload.get("tagIds", [])]
-        item.tags = Tag.query.filter(Tag.id.in_(tag_ids)).all() if tag_ids else []
+        item.tags = _tag_scope().filter(Tag.id.in_(tag_ids)).all() if tag_ids else []
     db.session.commit()
     return jsonify({"item": serialize_media(item)})
 

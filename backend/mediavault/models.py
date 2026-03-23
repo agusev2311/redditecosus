@@ -60,6 +60,8 @@ class Tag(TimestampMixin, db.Model):
     avatar_url = db.Column(db.String(512), nullable=True)
     created_by_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
 
+    created_by = db.relationship("User")
+
 
 class UploadBatch(TimestampMixin, db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid4()))

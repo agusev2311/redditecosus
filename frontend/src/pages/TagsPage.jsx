@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { apiFetch } from "../api";
+import { apiFetch, getStoredToken, uploadFileWithProgress } from "../api";
+import ColorField from "../components/ColorField";
 import TagBadge from "../components/TagBadge";
 import {
   DEFAULT_GRADIENT_ANGLE,
@@ -20,6 +21,8 @@ const emptyForm = {
   gradientAngle: DEFAULT_GRADIENT_ANGLE,
   textColor: "#f8fafc",
   avatarUrl: "",
+  avatarSourceValue: "",
+  avatarSourceType: "none",
 };
 
 const presets = [
@@ -73,6 +76,8 @@ function formFromTag(tag) {
     gradientAngle: tag.gradientAngle ?? DEFAULT_GRADIENT_ANGLE,
     textColor: tag.textColor || "#f8fafc",
     avatarUrl: tag.avatarUrl || "",
+    avatarSourceValue: tag.avatarSourceValue || tag.avatarUrl || "",
+    avatarSourceType: tag.avatarSourceType || "external",
   });
 }
 
@@ -81,15 +86,39 @@ export default function TagsPage() {
   const [search, setSearch] = useState("");
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
+  const [mediaSearch, setMediaSearch] = useState("");
+  const [mediaItems, setMediaItems] = useState([]);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const [avatarProgress, setAvatarProgress] = useState(0);
 
   async function load() {
     const response = await apiFetch("/tags");
     setItems(response.items || []);
   }
 
+  async function loadMedia(query = "") {
+    const params = new URLSearchParams({
+      mediaType: "image",
+      perPage: "18",
+    });
+    if (query.trim()) {
+      params.set("q", query.trim());
+    }
+    const response = await apiFetch(`/media?${params.toString()}`);
+    setMediaItems(response.items || []);
+  }
+
   useEffect(() => {
     load().catch(() => undefined);
+    loadMedia().catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      loadMedia(mediaSearch).catch(() => undefined);
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [mediaSearch]);
 
   const filteredItems = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -105,7 +134,10 @@ export default function TagsPage() {
 
   async function submit(event) {
     event.preventDefault();
-    const payload = syncGradientFields(form);
+    const payload = syncGradientFields({
+      ...form,
+      avatarUrl: form.avatarSourceValue || "",
+    });
     await apiFetch(editingId ? `/tags/${editingId}` : "/tags", {
       method: editingId ? "PATCH" : "POST",
       body: payload,
@@ -113,6 +145,7 @@ export default function TagsPage() {
     await load();
     setEditingId(null);
     setForm(emptyForm);
+    setAvatarProgress(0);
   }
 
   async function remove(tagId) {
@@ -121,12 +154,14 @@ export default function TagsPage() {
     if (editingId === tagId) {
       setEditingId(null);
       setForm(emptyForm);
+      setAvatarProgress(0);
     }
   }
 
   function resetEditor() {
     setEditingId(null);
     setForm(emptyForm);
+    setAvatarProgress(0);
   }
 
   function updateForm(updater) {
@@ -169,6 +204,49 @@ export default function TagsPage() {
     });
   }
 
+  function setExternalAvatar(value) {
+    updateForm((current) => ({
+      ...current,
+      avatarSourceType: value.trim() ? "external" : "none",
+      avatarSourceValue: value.trim(),
+      avatarUrl: value.trim(),
+    }));
+  }
+
+  function chooseMediaAvatar(item) {
+    updateForm((current) => ({
+      ...current,
+      avatarSourceType: "media",
+      avatarSourceValue: `media:${item.id}`,
+      avatarUrl: item.previewUrl || item.fileUrl,
+    }));
+  }
+
+  async function uploadAvatarFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setAvatarBusy(true);
+    setAvatarProgress(0);
+    try {
+      const response = await uploadFileWithProgress("/tags/avatar-upload", file, {
+        token: getStoredToken(),
+        onProgress: (loaded, total) => {
+          if (!total) return;
+          setAvatarProgress((loaded / total) * 100);
+        },
+      });
+      updateForm((current) => ({
+        ...current,
+        avatarSourceType: "upload",
+        avatarSourceValue: response.avatarRef,
+        avatarUrl: response.avatarUrl,
+      }));
+    } finally {
+      setAvatarBusy(false);
+      event.target.value = "";
+    }
+  }
+
   return (
     <div className="page-grid tag-studio-layout">
       <form className="glass panel sticky-panel tag-editor" onSubmit={submit}>
@@ -176,7 +254,7 @@ export default function TagsPage() {
           <div>
             <p className="eyebrow">tag studio</p>
             <h1>{editingId ? "Правка тега" : "Новый тег"}</h1>
-            <p className="muted">Стеклянный бейдж, до 10 цветов в градиенте и точная настройка прямо на месте.</p>
+            <p className="muted">Свой color picker, стеклянный градиент и аватарка из файла или вашей коллекции.</p>
           </div>
           {editingId ? (
             <button type="button" className="ghost-button" onClick={resetEditor}>
@@ -191,12 +269,7 @@ export default function TagsPage() {
             <strong>{form.name || "Ваш тег"}</strong>
             <p className="muted">{form.description || "Готовый бейдж сразу видно так же, как в библиотеке."}</p>
           </div>
-          <div
-            className="tag-gradient-bar"
-            style={{
-              backgroundImage: buildGradientString(form),
-            }}
-          />
+          <div className="tag-gradient-bar" style={{ backgroundImage: buildGradientString(form) }} />
         </div>
 
         <div className="tag-preset-row">
@@ -244,28 +317,24 @@ export default function TagsPage() {
 
         {form.styleMode === "solid" ? (
           <div className="field-grid">
-            <label>
-              Основной цвет
-              <input
-                type="color"
-                value={form.colorStart}
-                onChange={(event) =>
-                  updateForm((current) => ({
-                    ...current,
-                    colorStart: event.target.value,
-                    gradientColors: [event.target.value, current.colorEnd || event.target.value],
-                  }))
-                }
-              />
-            </label>
-            <label>
-              Текст
-              <input
-                type="color"
-                value={form.textColor}
-                onChange={(event) => updateForm((current) => ({ ...current, textColor: event.target.value }))}
-              />
-            </label>
+            <ColorField
+              label="Основной цвет"
+              value={form.colorStart}
+              onChange={(value) =>
+                updateForm((current) => ({
+                  ...current,
+                  colorStart: value,
+                  gradientColors: [value, current.colorEnd || value],
+                }))
+              }
+              id="tag-solid-color"
+            />
+            <ColorField
+              label="Текст"
+              value={form.textColor}
+              onChange={(value) => updateForm((current) => ({ ...current, textColor: value }))}
+              id="tag-solid-text"
+            />
           </div>
         ) : (
           <div className="tag-gradient-editor">
@@ -286,11 +355,13 @@ export default function TagsPage() {
 
             <div className="tag-gradient-stop-list">
               {form.gradientColors.map((color, index) => (
-                <div key={`${color}-${index}`} className="tag-gradient-stop">
-                  <label>
-                    Цвет {index + 1}
-                    <input type="color" value={color} onChange={(event) => setGradientStop(index, event.target.value)} />
-                  </label>
+                <div key={`${index}-${color}`} className="tag-gradient-stop">
+                  <ColorField
+                    label={`Цвет ${index + 1}`}
+                    value={color}
+                    onChange={(value) => setGradientStop(index, value)}
+                    id={`tag-color-stop-${index}`}
+                  />
                   <button
                     type="button"
                     className="ghost-button"
@@ -316,25 +387,76 @@ export default function TagsPage() {
               />
             </label>
 
-            <label>
-              Текст
-              <input
-                type="color"
-                value={form.textColor}
-                onChange={(event) => updateForm((current) => ({ ...current, textColor: event.target.value }))}
-              />
-            </label>
+            <ColorField
+              label="Текст"
+              value={form.textColor}
+              onChange={(value) => updateForm((current) => ({ ...current, textColor: value }))}
+              id="tag-text-color"
+            />
           </div>
         )}
 
-        <label>
-          URL аватарки
-          <input
-            placeholder="https://..."
-            value={form.avatarUrl}
-            onChange={(event) => updateForm((current) => ({ ...current, avatarUrl: event.target.value }))}
-          />
-        </label>
+        <div className="tag-avatar-editor">
+          <div className="section-head tag-gradient-head">
+            <div>
+              <h3>Аватарка тега</h3>
+              <p className="muted">Можно вставить URL, загрузить файл или взять картинку из своей медиатеки.</p>
+            </div>
+          </div>
+
+          <label>
+            Внешний URL
+            <input
+              placeholder="https://..."
+              value={form.avatarSourceType === "external" ? form.avatarSourceValue : ""}
+              onChange={(event) => setExternalAvatar(event.target.value)}
+            />
+          </label>
+
+          <div className="tag-avatar-upload-row">
+            <label className="ghost-button tag-upload-button">
+              {avatarBusy ? `Загрузка ${Math.round(avatarProgress)}%` : "Загрузить файл"}
+              <input hidden type="file" accept="image/*" onChange={uploadAvatarFile} />
+            </label>
+            <button
+              type="button"
+              className="ghost-button"
+              onClick={() =>
+                updateForm((current) => ({
+                  ...current,
+                  avatarSourceType: "none",
+                  avatarSourceValue: "",
+                  avatarUrl: "",
+                }))
+              }
+            >
+              Очистить
+            </button>
+          </div>
+
+          <div className="tag-media-picker">
+            <div className="toolbar tag-toolbar">
+              <input
+                placeholder="Искать картинку в своей библиотеке"
+                value={mediaSearch}
+                onChange={(event) => setMediaSearch(event.target.value)}
+              />
+            </div>
+
+            <div className="tag-media-grid">
+              {mediaItems.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`tag-media-card ${form.avatarSourceValue === `media:${item.id}` ? "tag-media-card-active" : ""}`}
+                  onClick={() => chooseMediaAvatar(item)}
+                >
+                  <img src={item.previewUrl || item.fileUrl} alt={item.originalFilename} loading="lazy" />
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
 
         <div className="button-row">
           <button className="primary-button">{editingId ? "Сохранить тег" : "Создать тег"}</button>
@@ -351,11 +473,7 @@ export default function TagsPage() {
             <h2>Все теги</h2>
           </div>
           <div className="toolbar tag-toolbar">
-            <input
-              placeholder="Искать теги"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
+            <input placeholder="Искать теги" value={search} onChange={(event) => setSearch(event.target.value)} />
           </div>
         </div>
 

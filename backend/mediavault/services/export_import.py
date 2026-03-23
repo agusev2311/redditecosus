@@ -53,6 +53,7 @@ def _export_manifest():
                 "gradientAngle": tag.gradient_angle,
                 "textColor": tag.text_color,
                 "avatarUrl": tag.avatar_url,
+                "createdByUsername": tag.created_by.username if getattr(tag, "created_by", None) else None,
             }
             for tag in Tag.query.order_by(Tag.id.asc()).all()
         ],
@@ -155,6 +156,7 @@ def import_export_archive(archive_path: Path) -> dict:
         for raw_tag in manifest.get("tags", []):
             tag = Tag.query.filter_by(slug=raw_tag["slug"]).first()
             if not tag:
+                owner = users_by_name.get(raw_tag.get("createdByUsername"))
                 tag = Tag(
                     name=raw_tag["name"],
                     slug=raw_tag["slug"],
@@ -170,6 +172,7 @@ def import_export_archive(archive_path: Path) -> dict:
                     gradient_angle=raw_tag.get("gradientAngle", 135),
                     text_color=raw_tag.get("textColor", "#f8fafc"),
                     avatar_url=raw_tag.get("avatarUrl"),
+                    created_by_id=owner.id if owner else None,
                 )
                 db.session.add(tag)
             tags_by_slug[tag.slug] = tag

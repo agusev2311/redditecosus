@@ -32,9 +32,9 @@ def _batch_file_rows(batch_id: str):
     )
 
 
-def _canonical_for_hash(hash_hex: str):
+def _canonical_for_hash(hash_hex: str, owner_id: int):
     item = (
-        MediaItem.query.filter_by(sha256_hash=hash_hex)
+        MediaItem.query.filter_by(sha256_hash=hash_hex, owner_id=owner_id)
         .order_by(MediaItem.is_duplicate.asc(), MediaItem.created_at.asc())
         .first()
     )
@@ -50,7 +50,7 @@ def _prepare_media_record(owner_id: int, batch_id: str, original_filename: str, 
 
     sha256_hash = calculate_sha256(source_path)
     size_bytes = source_path.stat().st_size
-    existing = _canonical_for_hash(sha256_hash)
+    existing = _canonical_for_hash(sha256_hash, owner_id)
 
     if existing:
         item = MediaItem(
