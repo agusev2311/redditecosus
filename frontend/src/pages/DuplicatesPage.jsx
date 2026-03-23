@@ -3,12 +3,12 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "../api";
 import MediaCard from "../components/MediaCard";
 
-const DEFAULT_THRESHOLD = 88;
+const DEFAULT_THRESHOLD = 82;
 
 export default function DuplicatesPage() {
   const [groups, setGroups] = useState([]);
   const [selected, setSelected] = useState({});
-  const [mode, setMode] = useState("exact");
+  const [mode, setMode] = useState("similar");
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
 
   async function load() {
@@ -46,7 +46,7 @@ export default function DuplicatesPage() {
             <p className="muted">
               {mode === "exact"
                 ? "Одинаковые файлы по sha256."
-                : "Поиск похожих картинок по визуальному отпечатку, даже если качество или размер сжались."}
+                : "Поиск похожих картинок по визуальному отпечатку. Лучше ловит пережатые и ресайзнутые копии."}
             </p>
           </div>
           <div className="duplicate-toolbar">

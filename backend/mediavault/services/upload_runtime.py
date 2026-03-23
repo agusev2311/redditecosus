@@ -155,14 +155,38 @@ def sync_upload_model(upload: UploadFile, state: dict) -> None:
     upload.total_chunks = int(state["totalChunks"])
     upload.uploaded_bytes = int(state["uploadedBytes"])
     upload.uploaded_chunks = int(state["uploadedChunks"])
-    upload.status = "uploaded" if upload.uploaded_bytes >= upload.size_bytes else "uploading"
-    if upload.status == "uploaded" and not upload.finalized_at:
+    is_fully_uploaded = upload.uploaded_bytes >= upload.size_bytes
+    if upload.status not in {"processing", "completed", "failed"}:
+        upload.status = "uploaded" if is_fully_uploaded else "uploading"
+    if is_fully_uploaded and not upload.finalized_at:
         upload.finalized_at = datetime.utcnow()
 
 
 def sync_batch_model(batch: UploadBatch, uploads: list[UploadFile]) -> None:
     batch.uploaded_bytes = 0
     batch.uploaded_files = 0
+    if batch.status not in {"uploading", "pending"}:
+        for upload in uploads:
+            if (
+                int(upload.size_bytes or 0) > 0
+                and int(upload.uploaded_bytes or 0) <= 0
+                and (
+                    upload.finalized_at
+                    or upload.status in {"uploaded", "queued", "processing", "completed", "failed"}
+                )
+            ):
+                upload.uploaded_bytes = int(upload.size_bytes)
+            if (
+                int(upload.total_chunks or 0) > 0
+                and int(upload.uploaded_chunks or 0) <= 0
+                and int(upload.uploaded_bytes or 0) >= int(upload.size_bytes or 0)
+            ):
+                upload.uploaded_chunks = int(upload.total_chunks)
+            batch.uploaded_bytes += int(upload.uploaded_bytes or 0)
+            if int(upload.uploaded_bytes or 0) >= int(upload.size_bytes or 0):
+                batch.uploaded_files += 1
+        return
+
     for upload in uploads:
         state = get_runtime_state(upload)
         sync_upload_model(upload, state)

@@ -9,7 +9,8 @@ from ..extensions import db
 from ..models import MediaItem
 from .storage import materialize_storage_path
 
-DEFAULT_SIMILARITY_THRESHOLD = 88
+DEFAULT_SIMILARITY_THRESHOLD = 82
+EXHAUSTIVE_COMPARE_LIMIT = 6000
 
 
 def _average_hash(image: Image.Image) -> int:
@@ -51,12 +52,17 @@ def _compare_hashes(left: str | None, right: str | None) -> int | None:
 
 
 def _band_keys(hash_hex: str) -> list[str]:
-    band_size = 4
+    band_size = 2
     keys = []
-    for phase in (0, 2):
+    for phase in (0, 1):
         for index, offset in enumerate(range(phase, len(hash_hex) - band_size + 1, band_size)):
             keys.append(f"{phase}:{index}:{hash_hex[offset:offset + band_size]}")
     return keys
+
+
+def _compare_hash_ints(left_hash: int, right_hash: int, total_bits: int) -> int:
+    distance = (left_hash ^ right_hash).bit_count()
+    return round(((total_bits - distance) / total_bits) * 100)
 
 
 def ensure_perceptual_hashes(items: Iterable[MediaItem]) -> None:
@@ -99,6 +105,8 @@ def build_similar_duplicate_groups(
     candidates.sort(key=lambda item: (item.created_at, item.id))
     parents = list(range(len(candidates)))
     ranks = [0] * len(candidates)
+    hash_ints = [int(item.perceptual_hash, 16) for item in candidates]
+    total_bits = len(candidates[0].perceptual_hash) * 4
 
     def find(index: int) -> int:
         while parents[index] != index:
@@ -117,27 +125,35 @@ def build_similar_duplicate_groups(
         if ranks[root_left] == ranks[root_right]:
             ranks[root_left] += 1
 
-    band_map: dict[str, list[int]] = defaultdict(list)
-    compared_pairs: set[tuple[int, int]] = set()
     pair_similarity: dict[tuple[int, int], int] = {}
+    compared_pairs: set[tuple[int, int]] = set()
 
-    for current_index, item in enumerate(candidates):
-        for band_key in _band_keys(item.perceptual_hash):
-            for other_index in band_map[band_key]:
-                pair = (other_index, current_index)
-                if pair in compared_pairs:
-                    continue
-                compared_pairs.add(pair)
-                similarity = _compare_hashes(
-                    candidates[other_index].perceptual_hash,
-                    item.perceptual_hash,
-                )
-                if similarity is None:
-                    continue
+    if len(candidates) <= EXHAUSTIVE_COMPARE_LIMIT:
+        for left_index in range(len(candidates)):
+            left_hash = hash_ints[left_index]
+            for right_index in range(left_index + 1, len(candidates)):
+                similarity = _compare_hash_ints(left_hash, hash_ints[right_index], total_bits)
                 if similarity >= threshold_percent:
-                    union(other_index, current_index)
-                    pair_similarity[pair] = similarity
-            band_map[band_key].append(current_index)
+                    union(left_index, right_index)
+                    pair_similarity[(left_index, right_index)] = similarity
+    else:
+        band_map: dict[str, list[int]] = defaultdict(list)
+        for current_index, item in enumerate(candidates):
+            for band_key in _band_keys(item.perceptual_hash):
+                for other_index in band_map[band_key]:
+                    pair = (other_index, current_index)
+                    if pair in compared_pairs:
+                        continue
+                    compared_pairs.add(pair)
+                    similarity = _compare_hash_ints(
+                        hash_ints[other_index],
+                        hash_ints[current_index],
+                        total_bits,
+                    )
+                    if similarity >= threshold_percent:
+                        union(other_index, current_index)
+                        pair_similarity[pair] = similarity
+                band_map[band_key].append(current_index)
 
     grouped_indexes: dict[int, list[int]] = defaultdict(list)
     for index in range(len(candidates)):
@@ -155,12 +171,11 @@ def build_similar_duplicate_groups(
                 ordered = tuple(sorted((left_index, right_index)))
                 similarity = pair_similarity.get(ordered)
                 if similarity is None:
-                    similarity = _compare_hashes(
-                        candidates[left_index].perceptual_hash,
-                        candidates[right_index].perceptual_hash,
+                    similarity = _compare_hash_ints(
+                        hash_ints[left_index],
+                        hash_ints[right_index],
+                        total_bits,
                     )
-                if similarity is None:
-                    continue
                 pair_scores.append(similarity)
                 best_similarity[candidates[left_index].id] = max(
                     best_similarity[candidates[left_index].id],
@@ -172,6 +187,14 @@ def build_similar_duplicate_groups(
                 )
 
         group_items = [candidates[index] for index in indexes]
+        group_items.sort(
+            key=lambda item: (
+                -best_similarity.get(item.id, 100),
+                item.is_duplicate,
+                item.created_at,
+                item.id,
+            )
+        )
         representative = group_items[0]
         groups.append(
             {
