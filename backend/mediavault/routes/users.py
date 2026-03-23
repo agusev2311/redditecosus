@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from flask import Blueprint, jsonify, request
 
 from ..auth import auth_required
@@ -73,16 +74,22 @@ def create_user():
     username = (payload.get("username") or "").strip()
     password = payload.get("password") or ""
     display_name = (payload.get("displayName") or username).strip()
-    role = payload.get("role") or "user"
+    role = (payload.get("role") or "user").strip().lower()
     if len(username) < 3 or len(password) < 8:
         return jsonify({"error": "Username or password is too short"}), 400
+    if role not in {"user", "admin"}:
+        return jsonify({"error": "Unsupported role"}), 400
     if User.query.filter_by(username=username).first():
         return jsonify({"error": "Username already exists"}), 400
 
     user = User(username=username, display_name=display_name, role=role, is_active=True)
     user.set_password(password)
     db.session.add(user)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "Could not create user because of a database conflict"}), 400
     return jsonify({"item": serialize_user(user)}), 201
 
 
@@ -94,10 +101,17 @@ def update_user(user_id: int):
     if "displayName" in payload:
         user.display_name = payload["displayName"].strip() or user.display_name
     if "role" in payload:
-        user.role = payload["role"]
+        role = (payload["role"] or "").strip().lower()
+        if role not in {"user", "admin"}:
+            return jsonify({"error": "Unsupported role"}), 400
+        user.role = role
     if "isActive" in payload:
         user.is_active = bool(payload["isActive"])
     if payload.get("password"):
         user.set_password(payload["password"])
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({"error": "Could not update user because of a database conflict"}), 400
     return jsonify({"item": serialize_user(user)})
