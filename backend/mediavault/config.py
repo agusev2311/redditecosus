@@ -50,6 +50,7 @@ class Config:
     TELEGRAM_POLL_IDLE_SECONDS = int(
         os.getenv("MEDIAHUB_TELEGRAM_POLL_IDLE_SECONDS", "5")
     )
+    TELEGRAM_API_BASE_URL = os.getenv("MEDIAHUB_TELEGRAM_API_BASE_URL", "https://api.telegram.org")
     RESUMABLE_UPLOAD_CHUNK_BYTES = int(
         os.getenv("MEDIAHUB_RESUMABLE_UPLOAD_CHUNK_BYTES", str(4 * 1024 * 1024))
     )

@@ -14,6 +14,8 @@ from ..models import UploadBatch, UploadFile, User
 from .settings import get_bool_setting, get_int_setting, get_setting, set_setting
 from .storage import is_archive_file
 
+OFFICIAL_BOT_API_DOWNLOAD_LIMIT_BYTES = 20 * 1024 * 1024
+
 
 def telegram_configured() -> bool:
     return bool(get_setting("telegram.bot_token")) and bool(get_setting("telegram.chat_id"))
@@ -27,18 +29,32 @@ def telegram_polling_enabled() -> bool:
     return get_bool_setting("telegram.polling_enabled", True)
 
 
+def telegram_api_base_url() -> str:
+    return current_app.config["TELEGRAM_API_BASE_URL"].rstrip("/")
+
+
+def telegram_uses_local_api_server() -> bool:
+    return telegram_api_base_url() != "https://api.telegram.org"
+
+
 def _api_request(method: str, endpoint: str, **kwargs) -> dict:
     token = telegram_bot_token()
     if not token:
         raise RuntimeError("Telegram bot token is not configured")
     response = requests.request(
         method,
-        f"https://api.telegram.org/bot{token}/{endpoint}",
+        f"{telegram_api_base_url()}/bot{token}/{endpoint}",
         timeout=kwargs.pop("timeout", 30),
         **kwargs,
     )
-    response.raise_for_status()
-    payload = response.json()
+    payload = {}
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if not response.ok:
+        description = payload.get("description") if isinstance(payload, dict) else None
+        raise RuntimeError(description or f"Telegram API HTTP {response.status_code} at {endpoint}")
     if not payload.get("ok", False):
         raise RuntimeError(payload.get("description") or f"Telegram API error at {endpoint}")
     return payload
@@ -80,7 +96,7 @@ def send_document_chunks(file_path: str, caption_prefix: str | None = None) -> i
                 caption = f"{caption} ({index})"
             with part_path.open("rb") as part_file:
                 response = requests.post(
-                    f"https://api.telegram.org/bot{telegram_bot_token()}/sendDocument",
+                    f"{telegram_api_base_url()}/bot{telegram_bot_token()}/sendDocument",
                     data={"chat_id": str(chat_id), "caption": caption},
                     files={"document": (part_path.name, part_file)},
                     timeout=180,
@@ -113,7 +129,7 @@ def _download_file(file_id: str, destination: Path) -> None:
     file_payload = _api_request("GET", "getFile", params={"file_id": file_id})
     file_path = file_payload["result"]["file_path"]
     response = requests.get(
-        f"https://api.telegram.org/file/bot{telegram_bot_token()}/{file_path}",
+        f"{telegram_api_base_url()}/file/bot{telegram_bot_token()}/{file_path}",
         timeout=180,
         stream=True,
     )
@@ -145,6 +161,16 @@ def _ingest_archive_from_message(chat_id: str, message: dict) -> None:
         )
         return
 
+    file_size = int(document.get("file_size") or 0)
+    if file_size > OFFICIAL_BOT_API_DOWNLOAD_LIMIT_BYTES and not telegram_uses_local_api_server():
+        send_chat_message(
+            chat_id,
+            "Этот архив слишком большой для обычного Telegram Bot API. "
+            "Сейчас Telegram позволяет боту скачать только файлы до 20 MB через cloud Bot API. "
+            "Для больших архивов нужен локальный Telegram Bot API server.",
+        )
+        return
+
     admin_user = _admin_user()
     if not admin_user:
         send_chat_message(chat_id, "Админ-пользователь ещё не создан в MediaHub.")
@@ -168,34 +194,39 @@ def _ingest_archive_from_message(chat_id: str, message: dict) -> None:
     db.session.add(batch)
     db.session.flush()
 
-    downloaded = Path(batch.temp_dir) / filename
-    _download_file(document["file_id"], downloaded)
-    size_bytes = downloaded.stat().st_size
-    upload = UploadFile(
-        batch_id=batch.id,
-        client_file_id=message_key,
-        original_filename=filename,
-        temp_path=downloaded.as_posix(),
-        mime_type=document.get("mime_type") or "application/octet-stream",
-        size_bytes=size_bytes,
-        chunk_size=size_bytes,
-        total_chunks=1,
-        uploaded_chunks=1,
-        uploaded_bytes=size_bytes,
-        upload_source="telegram",
-        finalized_at=datetime.utcnow(),
-        status="uploaded",
-    )
-    db.session.add(upload)
-    batch.uploaded_bytes = size_bytes
-    batch.uploaded_files = 1
-    db.session.commit()
+    try:
+        downloaded = Path(batch.temp_dir) / filename
+        _download_file(document["file_id"], downloaded)
+        size_bytes = downloaded.stat().st_size
+        upload = UploadFile(
+            batch_id=batch.id,
+            client_file_id=message_key,
+            original_filename=filename,
+            temp_path=downloaded.as_posix(),
+            mime_type=document.get("mime_type") or "application/octet-stream",
+            size_bytes=size_bytes,
+            chunk_size=size_bytes,
+            total_chunks=1,
+            uploaded_chunks=1,
+            uploaded_bytes=size_bytes,
+            upload_source="telegram",
+            finalized_at=datetime.utcnow(),
+            status="uploaded",
+        )
+        db.session.add(upload)
+        batch.uploaded_bytes = size_bytes
+        batch.uploaded_files = 1
+        db.session.commit()
 
-    launch_batch_job(current_app._get_current_object(), batch.id)
-    send_chat_message(
-        chat_id,
-        f"Архив `{filename}` принят. Импорт запущен, batch: `{batch.id[:8]}`.",
-    )
+        launch_batch_job(current_app._get_current_object(), batch.id)
+        send_chat_message(
+            chat_id,
+            f"Архив `{filename}` принят. Импорт запущен, batch: `{batch.id[:8]}`.",
+        )
+    except Exception as exc:
+        db.session.rollback()
+        shutil.rmtree(batch.temp_dir, ignore_errors=True)
+        send_chat_message(chat_id, f"Не удалось принять архив: {exc}")
 
 
 def _handle_message(message: dict) -> None:
@@ -253,8 +284,16 @@ def poll_once() -> int:
     updates = _get_updates(offset=last_update_id + 1 if last_update_id else None)
     max_update_id = last_update_id
     for update in updates:
-        process_update(update)
         max_update_id = max(max_update_id, int(update["update_id"]))
+        try:
+            process_update(update)
+        except Exception as exc:
+            current_app.logger.warning(
+                "Telegram update %s failed: %s",
+                update.get("update_id"),
+                exc,
+            )
+            db.session.rollback()
     if max_update_id != last_update_id:
         set_setting("telegram.last_update_id", max_update_id)
         db.session.commit()
