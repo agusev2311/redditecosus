@@ -1,0 +1,8 @@
+Flask==3.1.1
+Flask-Cors==5.0.1
+Flask-SQLAlchemy==3.1.1
+Pillow==11.1.0
+cryptography==45.0.4
+psutil==7.0.0
+requests==2.32.3
+gunicorn==23.0.0

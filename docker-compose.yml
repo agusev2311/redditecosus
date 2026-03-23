@@ -1,0 +1,24 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    environment:
+      MEDIAHUB_SECRET_KEY: ${MEDIAHUB_SECRET_KEY:-change-me}
+      MEDIAHUB_DATA_ROOT: /app/data
+      MEDIAHUB_FRONTEND_BASE_URL: ${MEDIAHUB_FRONTEND_BASE_URL:-http://localhost:8080}
+      MEDIAHUB_CORS_ORIGINS: ${MEDIAHUB_CORS_ORIGINS:-http://localhost:8080,http://localhost:5173}
+      MEDIAHUB_LOW_DISK_THRESHOLD_GB: ${MEDIAHUB_LOW_DISK_THRESHOLD_GB:-20}
+      MEDIAHUB_LOW_DISK_THRESHOLD_PERCENT: ${MEDIAHUB_LOW_DISK_THRESHOLD_PERCENT:-10}
+      MEDIAHUB_ENCRYPTION_PASSPHRASE: ${MEDIAHUB_ENCRYPTION_PASSPHRASE:-}
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "0.0.0.0:5000:5000"
+
+  frontend:
+    build:
+      context: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "0.0.0.0:8080:80"
