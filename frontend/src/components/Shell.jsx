@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
@@ -20,6 +20,7 @@ export default function Shell() {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
   const isAdmin = user?.role === "admin";
   const items = navItems(isAdmin);
 
@@ -65,7 +66,9 @@ export default function Shell() {
           <div className="status-pill">{isAdmin ? "admin" : "member"}</div>
         </header>
         <div className="page-wrap">
-          <Outlet />
+          <div key={location.pathname} className="route-stage">
+            <Outlet />
+          </div>
         </div>
         <nav className="mobile-dock glass">
           {items.map((item) => (
