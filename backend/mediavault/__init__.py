@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, redirect, request
 from flask_cors import CORS
 
 from .config import Config
@@ -38,6 +38,29 @@ def create_app() -> Flask:
     app.register_blueprint(media_bp, url_prefix="/api/media")
     app.register_blueprint(shares_bp, url_prefix="/api/shares")
     app.register_blueprint(admin_bp, url_prefix="/api/admin")
+
+    def _guess_frontend_url() -> str:
+        configured = app.config["FRONTEND_BASE_URL"].strip()
+        if configured and "localhost" not in configured and "127.0.0.1" not in configured:
+            return configured.rstrip("/")
+        host = request.host.split(":", 1)[0]
+        scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
+        return f"{scheme}://{host}:8080"
+
+    @app.get("/")
+    def index():
+        return redirect(_guess_frontend_url(), code=302)
+
+    @app.get("/api")
+    def api_index():
+        return jsonify(
+            {
+                "status": "ok",
+                "message": "MediaHub backend is running.",
+                "frontendUrl": _guess_frontend_url(),
+                "healthUrl": "/api/health",
+            }
+        )
 
     @app.get("/api/health")
     def health():
