@@ -3,17 +3,26 @@ import { formatBytes } from "../lib/format";
 export default function MediaCard({ item, onSelect, compact = false }) {
   const Container = onSelect ? "button" : "article";
   const tagCountLabel = item.tags?.length ? `${item.tags.length} тег.` : "";
+  const containerClassName = [
+    "media-card",
+    compact ? "media-card-compact" : "",
+    item.mediaType === "video" ? "media-card-video" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <Container
       {...(onSelect ? { type: "button", onClick: () => onSelect(item) } : {})}
-      className={`media-card ${compact ? "media-card-compact" : ""}`}
+      className={containerClassName}
       title={item.originalFilename}
       aria-label={item.originalFilename}
     >
       <div className="media-thumb">
         {item.mediaType === "video" ? (
-          <video src={item.previewUrl || item.fileUrl} muted playsInline preload="metadata" />
+          <div className="media-thumb-video-placeholder">
+            <span className="media-thumb-video-label">VIDEO</span>
+          </div>
         ) : (
           <img src={item.previewUrl} alt={item.originalFilename} loading="lazy" />
         )}
