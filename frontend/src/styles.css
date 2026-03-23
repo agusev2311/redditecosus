@@ -872,6 +872,11 @@ button.tag-badge:hover {
   font-size: 1.4rem;
 }
 
+.stat-subcopy {
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+}
+
 .list-stack {
   display: grid;
   gap: 12px;

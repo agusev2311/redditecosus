@@ -14,6 +14,14 @@ export function formatRate(value = 0) {
   return `${formatBytes(value)}/s`;
 }
 
+export function formatMegabitsPerSecond(value = 0) {
+  const mbps = (Number(value || 0) * 8) / 1000 / 1000;
+  if (!Number.isFinite(mbps) || mbps <= 0) {
+    return "0 Mbps";
+  }
+  return `${mbps.toFixed(mbps >= 100 ? 1 : 2)} Mbps`;
+}
+
 export function formatDuration(seconds = 0) {
   if (!Number.isFinite(seconds) || seconds <= 0) return "0s";
   const h = Math.floor(seconds / 3600);

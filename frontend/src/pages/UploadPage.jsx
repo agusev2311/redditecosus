@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { apiFetch, getStoredToken, uploadBinaryChunk } from "../api";
-import { formatBytes, formatDuration, formatRate } from "../lib/format";
+import { formatBytes, formatDuration, formatMegabitsPerSecond, formatRate } from "../lib/format";
 
 const DRAFT_KEY = "mediahub_upload_draft_v3";
 const DEFAULT_CHUNK_SIZE = 16 * 1024 * 1024;
@@ -626,6 +626,12 @@ export default function UploadPage() {
         const response = await apiFetch(`/uploads/${batchId}`);
         rememberSession(response.item);
         if (["completed", "completed_with_warnings", "failed"].includes(response.item.status)) {
+          if (response.item.status === "completed_with_warnings" && response.item.errorMessage) {
+            setError(response.item.errorMessage);
+          }
+          if (response.item.status === "failed" && response.item.errorMessage) {
+            setError(response.item.errorMessage);
+          }
           window.clearInterval(poll);
         }
       } catch {
@@ -815,6 +821,9 @@ export default function UploadPage() {
           <div className="stat-card">
             <span>Скорость</span>
             <strong>{telemetry.speed ? formatRate(telemetry.speed) : "—"}</strong>
+            <small className="muted stat-subcopy">
+              {telemetry.speed ? formatMegabitsPerSecond(telemetry.speed) : "как в speedtest"}
+            </small>
           </div>
           <div className="stat-card">
             <span>Осталось</span>
@@ -833,6 +842,10 @@ export default function UploadPage() {
               <p>
                 Обработано: {session.processedItems}/{session.totalItems || "?"}
               </p>
+              <p>
+                Сохранено: {session.storedItems || 0} • дублей: {session.duplicateItems || 0} • ошибок: {session.failedItems || 0}
+              </p>
+              {session.errorMessage ? <p className="muted">Причина: {session.errorMessage}</p> : null}
             </div>
           ) : (
             <div className="panel-block">
