@@ -4,11 +4,22 @@ from datetime import datetime
 
 from flask import current_app, url_for
 
+from ..auth import extract_request_token
+
 from ..models import UploadFile
 
 
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() + "Z" if value else None
+
+
+def _url_with_token(endpoint: str, **values) -> str:
+    url = url_for(endpoint, **values)
+    token = extract_request_token()
+    if not token:
+        return url
+    separator = "&" if "?" in url else "?"
+    return f"{url}{separator}token={token}"
 
 
 def serialize_user(user):
@@ -58,9 +69,9 @@ def serialize_media(item):
         "createdAt": _iso(item.created_at),
         "updatedAt": _iso(item.updated_at),
         "tags": [serialize_tag(tag) for tag in item.tags],
-        "fileUrl": url_for("media.stream_media", media_id=item.id),
-        "previewUrl": url_for("media.stream_preview", media_id=item.id),
-        "downloadUrl": url_for("media.stream_media", media_id=item.id, download=1),
+        "fileUrl": _url_with_token("media.stream_media", media_id=item.id),
+        "previewUrl": _url_with_token("media.stream_preview", media_id=item.id),
+        "downloadUrl": _url_with_token("media.stream_media", media_id=item.id, download=1),
     }
 
 

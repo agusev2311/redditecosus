@@ -247,7 +247,19 @@ def inspect_image_size(source_path: Path) -> tuple[int | None, int | None]:
 
 
 def build_streaming_response(relative_path: str, encrypted: bool, mime_type: str, download_name: str | None = None):
-    from flask import Response, stream_with_context
+    from flask import Response, current_app, send_file, stream_with_context
+
+    absolute = Path(current_app.config["DATA_ROOT"]) / relative_path
+    if not encrypted:
+        return send_file(
+            absolute,
+            mimetype=mime_type,
+            as_attachment=bool(download_name),
+            download_name=download_name,
+            conditional=True,
+            etag=True,
+            max_age=604800,
+        )
 
     headers = {}
     if download_name:

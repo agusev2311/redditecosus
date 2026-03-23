@@ -20,7 +20,7 @@ def get_current_user():
     return getattr(g, "current_user", None)
 
 
-def _extract_token() -> str | None:
+def extract_request_token() -> str | None:
     header = request.headers.get("Authorization", "")
     if header.lower().startswith("bearer "):
         return header.split(" ", 1)[1].strip()
@@ -44,7 +44,7 @@ def auth_required(admin: bool = False):
     def decorator(view):
         @wraps(view)
         def wrapped(*args, **kwargs):
-            token = _extract_token()
+            token = extract_request_token()
             user = verify_auth_token(token)
             if not user:
                 return jsonify({"error": "Authentication required"}), 401
