@@ -89,9 +89,15 @@ export default function ReviewPage() {
             <p className="muted">Случайная выдача, крупный центрированный просмотр и один жест до следующего файла.</p>
           </div>
           {item ? (
-            <div className="review-stage-stats">
-              <span className="status-pill">{item.mediaType === "video" ? "Видео" : "Изображение"}</span>
-              <span className="status-pill">{formatBytes(item.sizeBytes)}</span>
+            <div className="review-stage-head-actions">
+              <div className="review-stage-stats">
+                <span className="status-pill">Случайный файл</span>
+                <span className="status-pill">{item.mediaType === "video" ? "Видео" : "Изображение"}</span>
+                <span className="status-pill">{formatBytes(item.sizeBytes)}</span>
+              </div>
+              <button type="button" className="ghost-button" disabled={saving} onClick={skipCurrent}>
+                Другой случайный
+              </button>
             </div>
           ) : null}
         </div>

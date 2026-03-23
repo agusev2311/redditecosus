@@ -33,6 +33,10 @@
   --hero-overlay: linear-gradient(135deg, rgba(6, 10, 18, 0.78), rgba(8, 20, 16, 0.72));
   --tag-glass: rgba(255, 255, 255, 0.16);
   --tag-sheen: rgba(255, 255, 255, 0.22);
+  --glass-edge: rgba(255, 255, 255, 0.12);
+  --glass-highlight: rgba(255, 255, 255, 0.08);
+  --glass-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02));
+  --glass-shadow-soft: 0 14px 36px rgba(3, 6, 18, 0.18);
   --font-sans: "Segoe UI Variable Display", "Bahnschrift", "Trebuchet MS", sans-serif;
   --font-mono: "Cascadia Code", "JetBrains Mono", monospace;
 }
@@ -72,6 +76,10 @@
   --hero-overlay: linear-gradient(135deg, rgba(248, 250, 255, 0.84), rgba(229, 255, 240, 0.72));
   --tag-glass: rgba(255, 255, 255, 0.28);
   --tag-sheen: rgba(255, 255, 255, 0.62);
+  --glass-edge: rgba(255, 255, 255, 0.88);
+  --glass-highlight: rgba(255, 255, 255, 0.92);
+  --glass-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.6));
+  --glass-shadow-soft: 0 16px 34px rgba(112, 126, 166, 0.16);
 }
 
 * {
@@ -155,9 +163,16 @@ video {
 }
 
 .glass {
-  background: linear-gradient(180deg, var(--panel), var(--surface-0));
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--panel) 94%, white 6%), color-mix(in srgb, var(--surface-0) 92%, transparent)),
+    var(--glass-surface);
   border: 1px solid var(--line);
   box-shadow: var(--shadow);
+  position: relative;
+  box-shadow:
+    inset 0 1px 0 var(--glass-edge),
+    inset 0 12px 24px color-mix(in srgb, var(--glass-highlight) 32%, transparent),
+    var(--shadow);
 }
 
 .sidebar {
@@ -193,6 +208,9 @@ video {
   padding: 12px 16px;
   text-decoration: none;
   transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 38%, transparent),
+    var(--glass-shadow-soft);
 }
 
 .sidebar-nav a:hover,
@@ -203,7 +221,9 @@ video {
 }
 
 .sidebar-nav a {
-  background: var(--nav-bg);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--nav-bg) 90%, white 10%), color-mix(in srgb, var(--surface-0) 84%, transparent)),
+    var(--glass-surface);
   color: var(--muted);
 }
 
@@ -354,10 +374,15 @@ h3 {
   border-radius: 999px;
   border: 1px solid var(--line);
   padding: 10px 14px;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 52%, transparent),
+    var(--glass-shadow-soft);
 }
 
 .status-pill {
-  background: var(--surface-2);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 86%, white 14%), color-mix(in srgb, var(--surface-1) 88%, transparent)),
+    var(--glass-surface);
 }
 
 .warning-pill,
@@ -380,7 +405,9 @@ h3 {
 
 .ghost-button,
 .inline-link {
-  background: var(--ghost-bg);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--ghost-bg) 86%, white 14%), color-mix(in srgb, var(--surface-0) 88%, transparent)),
+    var(--glass-surface);
   color: var(--text);
 }
 
@@ -449,7 +476,12 @@ textarea {
 .review-media {
   border-radius: 24px;
   border: 1px dashed var(--dashed-accent);
-  background: var(--surface-1);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-1) 90%, white 10%), color-mix(in srgb, var(--surface-0) 88%, transparent)),
+    var(--glass-surface);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 36%, transparent),
+    var(--glass-shadow-soft);
 }
 
 .dropzone {
@@ -482,7 +514,9 @@ textarea {
 
 .media-card {
   border: 1px solid var(--line);
-  background: var(--surface-1);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-1) 90%, white 10%), color-mix(in srgb, var(--surface-0) 88%, transparent)),
+    var(--glass-surface);
   border-radius: 24px;
   padding: 12px;
   text-align: left;
@@ -490,6 +524,9 @@ textarea {
   min-width: 0;
   position: relative;
   overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 44%, transparent),
+    var(--glass-shadow-soft);
 }
 
 .media-card-compact {
@@ -551,21 +588,26 @@ textarea {
   align-items: center;
   padding: 8px 12px;
   border-radius: 999px;
-  border: 1px solid var(--line);
+  border: 1px solid color-mix(in srgb, var(--line) 68%, white 32%);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--panel-strong) 86%, white 14%), color-mix(in srgb, var(--panel) 94%, transparent)),
-    linear-gradient(135deg, color-mix(in srgb, var(--accent) 10%, transparent), color-mix(in srgb, var(--accent-2) 10%, transparent));
+    linear-gradient(180deg, color-mix(in srgb, var(--panel-strong) 78%, white 22%), color-mix(in srgb, var(--panel) 82%, transparent)),
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, transparent), color-mix(in srgb, var(--accent-2) 14%, transparent)),
+    var(--glass-surface);
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 28%, transparent),
-    0 10px 26px rgba(7, 10, 20, 0.18);
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
+    inset 0 1px 0 color-mix(in srgb, white 38%, transparent),
+    inset 0 10px 18px color-mix(in srgb, var(--glass-highlight) 22%, transparent),
+    0 16px 30px rgba(7, 10, 20, 0.18);
+  backdrop-filter: blur(24px) saturate(165%);
+  -webkit-backdrop-filter: blur(24px) saturate(165%);
   color: var(--text);
   font-size: 0.82rem;
+  font-weight: 600;
 }
 
 .media-card-chip-soft {
-  background: color-mix(in srgb, var(--surface-success) 88%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-success) 86%, white 14%), color-mix(in srgb, var(--surface-success) 56%, transparent)),
+    var(--glass-surface);
 }
 
 .tag-row,
@@ -588,7 +630,10 @@ textarea {
   isolation: isolate;
   color: var(--tag-text);
   background: var(--tag-base);
-  box-shadow: inset 0 1px 0 var(--tag-glass), 0 10px 26px rgba(7, 10, 20, 0.12);
+  box-shadow:
+    inset 0 1px 0 var(--tag-glass),
+    inset 0 10px 18px color-mix(in srgb, var(--tag-sheen) 18%, transparent),
+    0 12px 28px rgba(7, 10, 20, 0.14);
   backdrop-filter: blur(18px) saturate(150%);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
 }
@@ -671,7 +716,12 @@ textarea {
   padding: 18px;
   border-radius: 22px;
   border: 1px solid var(--line);
-  background: var(--surface-1);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-1) 88%, white 12%), color-mix(in srgb, var(--surface-0) 88%, transparent)),
+    var(--glass-surface);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 42%, transparent),
+    var(--glass-shadow-soft);
 }
 
 .stat-card strong,
@@ -690,7 +740,12 @@ textarea {
   padding: 16px;
   border-radius: 22px;
   border: 1px solid var(--line);
-  background: var(--surface-1);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-1) 88%, white 12%), color-mix(in srgb, var(--surface-0) 88%, transparent)),
+    var(--glass-surface);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 40%, transparent),
+    var(--glass-shadow-soft);
 }
 
 .queue-row {
@@ -730,6 +785,7 @@ textarea {
   display: grid;
   gap: 18px;
   min-width: 0;
+  align-content: start;
 }
 
 .review-stage-stats {
@@ -738,14 +794,23 @@ textarea {
   gap: 10px;
 }
 
+.review-stage-head-actions {
+  display: grid;
+  gap: 12px;
+  justify-items: end;
+}
+
 .review-stage-body {
   display: grid;
   gap: 16px;
+  justify-items: center;
+  align-items: center;
 }
 
 .review-media-stage {
   min-height: clamp(360px, 62vh, 820px);
   padding: clamp(10px, 1.4vw, 18px);
+  width: 100%;
 }
 
 .review-media-frame {
@@ -774,7 +839,12 @@ textarea {
   padding: 18px;
   border-radius: 22px;
   border: 1px solid var(--line);
-  background: var(--surface-1);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-1) 88%, white 12%), color-mix(in srgb, var(--surface-0) 88%, transparent)),
+    var(--glass-surface);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 40%, transparent),
+    var(--glass-shadow-soft);
 }
 
 .review-selected-tags {
@@ -841,7 +911,12 @@ textarea {
   padding: 18px;
   border-radius: 22px;
   border: 1px solid var(--line);
-  background: var(--surface-1);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-1) 88%, white 12%), color-mix(in srgb, var(--surface-0) 88%, transparent)),
+    var(--glass-surface);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 40%, transparent),
+    var(--glass-shadow-soft);
 }
 
 .tag-gradient-head {
@@ -864,7 +939,21 @@ textarea {
   min-height: 56px;
   border-radius: 18px;
   border: 1px solid var(--line);
-  box-shadow: inset 0 1px 0 var(--tag-glass);
+  box-shadow:
+    inset 0 1px 0 var(--tag-glass),
+    inset 0 12px 18px color-mix(in srgb, var(--tag-sheen) 22%, transparent),
+    var(--glass-shadow-soft);
+  position: relative;
+  overflow: hidden;
+}
+
+.tag-gradient-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.04) 48%, rgba(255, 255, 255, 0.18));
+  opacity: 0.72;
+  pointer-events: none;
 }
 
 .tag-angle-field {
@@ -931,7 +1020,12 @@ textarea {
   padding: 14px;
   border-radius: 18px;
   border: 1px solid var(--line);
-  background: var(--surface-1);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-1) 88%, white 12%), color-mix(in srgb, var(--surface-0) 88%, transparent)),
+    var(--glass-surface);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 44%, transparent),
+    var(--glass-shadow-soft);
 }
 
 .color-field-head {
@@ -947,6 +1041,50 @@ textarea {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 12px;
   align-items: center;
+}
+
+.color-field-sliders {
+  display: grid;
+  gap: 10px;
+}
+
+.color-slider {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.color-slider input[type="range"] {
+  appearance: none;
+  width: 100%;
+  height: 12px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--line) 72%, white 28%);
+  border-radius: 999px;
+  background-color: transparent;
+  background-size: cover;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 42%, transparent),
+    0 10px 22px rgba(7, 10, 20, 0.12);
+}
+
+.color-slider input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--line) 52%, white 48%);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.62));
+  box-shadow: 0 6px 18px rgba(7, 10, 20, 0.2);
+}
+
+.color-slider input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--line) 52%, white 48%);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.62));
+  box-shadow: 0 6px 18px rgba(7, 10, 20, 0.2);
 }
 
 .color-palette {
@@ -1111,7 +1249,7 @@ textarea {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .mobile-dock {
+.mobile-dock {
     display: flex;
     gap: 10px;
     position: fixed;
@@ -1122,6 +1260,9 @@ textarea {
     padding: 10px;
     border-radius: 24px;
     overflow-x: auto;
+    box-shadow:
+      inset 0 1px 0 color-mix(in srgb, var(--glass-highlight) 48%, transparent),
+      0 20px 48px rgba(7, 10, 20, 0.26);
   }
 
   .mobile-dock a {
@@ -1172,6 +1313,10 @@ textarea {
   .toolbar {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .review-stage-head-actions {
+    justify-items: stretch;
   }
 
   .button-row {
@@ -1229,6 +1374,39 @@ textarea {
 
   .tag-media-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 460px) {
+  .app-shell {
+    gap: 10px;
+  }
+
+  .topbar,
+  .panel,
+  .hero-panel,
+  .sidebar {
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .media-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .review-stage-stats {
+    gap: 8px;
+  }
+
+  .status-pill,
+  .warning-pill,
+  .card-badge,
+  .stat-chip,
+  .success-box,
+  .error-box,
+  .media-card-chip {
+    padding: 8px 11px;
   }
 }
 
