@@ -3,22 +3,36 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch, getStoredToken, uploadBinaryChunk } from "../api";
 import { formatBytes, formatDuration, formatRate } from "../lib/format";
 
-const DRAFT_KEY = "mediahub_upload_draft_v2";
-const DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024;
-const DRAFT_SYNC_DELAY_MS = 800;
-const PROGRESS_REFRESH_MS = 120;
-const SPEED_WINDOW_MS = 6000;
-const MAX_PARALLEL_CHUNKS = 4;
+const DRAFT_KEY = "mediahub_upload_draft_v3";
+const DEFAULT_CHUNK_SIZE = 16 * 1024 * 1024;
+const DRAFT_SYNC_DELAY_MS = 1400;
+const PROGRESS_REFRESH_MS = 140;
+const SPEED_WINDOW_MS = 5000;
+const MAX_PARALLEL_FILES = 2;
+const MAX_PARALLEL_PARTS = 4;
 
 function pickChunkSize(fileSize, preferredChunkSize) {
   const base = Math.max(preferredChunkSize || DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_SIZE);
-  if (fileSize >= 1024 * 1024 * 1024) {
+  if (fileSize >= 2 * 1024 * 1024 * 1024) {
+    return Math.max(base, 32 * 1024 * 1024);
+  }
+  if (fileSize >= 512 * 1024 * 1024) {
+    return Math.max(base, 24 * 1024 * 1024);
+  }
+  if (fileSize >= 64 * 1024 * 1024) {
     return Math.max(base, 16 * 1024 * 1024);
   }
-  if (fileSize >= 256 * 1024 * 1024) {
-    return Math.max(base, 12 * 1024 * 1024);
-  }
   return base;
+}
+
+function pickPartWorkers(fileSize, totalFiles) {
+  if (totalFiles <= 1) {
+    return fileSize >= 256 * 1024 * 1024 ? MAX_PARALLEL_PARTS : 3;
+  }
+  if (fileSize >= 512 * 1024 * 1024) {
+    return 2;
+  }
+  return 1;
 }
 
 function deriveCompletedChunks(uploadedBytes, size, chunkSize) {
@@ -26,15 +40,14 @@ function deriveCompletedChunks(uploadedBytes, size, chunkSize) {
     return [];
   }
   const cappedBytes = Math.min(uploadedBytes, size);
-  const fullChunks = Math.floor(cappedBytes / chunkSize);
-  const chunks = Array.from({ length: fullChunks }, (_, index) => index);
-  const hasPartialChunk = cappedBytes % chunkSize !== 0 && cappedBytes < size;
-  if (hasPartialChunk) {
-    chunks.push(fullChunks);
-  }
+  const totalChunks = Math.ceil(size / chunkSize);
   if (cappedBytes >= size) {
-    const totalChunks = Math.ceil(size / chunkSize);
     return Array.from({ length: totalChunks }, (_, index) => index);
+  }
+  const chunks = [];
+  const fullChunks = Math.floor(cappedBytes / chunkSize);
+  for (let index = 0; index < fullChunks; index += 1) {
+    chunks.push(index);
   }
   return chunks;
 }
@@ -96,6 +109,7 @@ function queueFromFiles(files, draft, preferredChunkSize = DEFAULT_CHUNK_SIZE) {
     const signature = fileSignature(file);
     const saved = draft?.files?.[signature];
     const chunkSize = saved?.chunkSize || pickChunkSize(file.size, preferredChunkSize);
+    const totalChunks = Math.ceil(file.size / chunkSize);
     const completedChunks = mergeCompletedChunks(
       saved?.completedChunks || [],
       deriveCompletedChunks(saved?.uploadedBytes || 0, file.size, chunkSize)
@@ -114,6 +128,7 @@ function queueFromFiles(files, draft, preferredChunkSize = DEFAULT_CHUNK_SIZE) {
       progress: file.size ? uploadedBytes / file.size : 0,
       status: saved ? saved.status || "paused" : "queued",
       chunkSize,
+      totalChunks,
       completedChunks,
       error: saved?.error || "",
     };
@@ -133,6 +148,7 @@ function toDraft(batchId, queue) {
           fileId: entry.fileId,
           uploadedBytes: entry.uploadedBytes,
           chunkSize: entry.chunkSize,
+          totalChunks: entry.totalChunks,
           completedChunks: entry.completedChunks || [],
           status: entry.status,
           error: entry.error || "",
@@ -201,7 +217,7 @@ export default function UploadPage() {
   useEffect(() => {
     function handleOnline() {
       setIsOnline(true);
-      setNetworkMessage("Сеть вернулась. Пробую продолжить загрузку.");
+      setNetworkMessage("Сеть вернулась. Новый upload engine пробует продолжить загрузку.");
       if (resumeOnReconnectRef.current && files.length && !busy) {
         startUploadRef.current?.({ silent: true }).catch(() => undefined);
       }
@@ -209,7 +225,7 @@ export default function UploadPage() {
 
     function handleOffline() {
       setIsOnline(false);
-      setNetworkMessage("Интернет пропал. Загрузка поставлена на паузу и сможет продолжиться.");
+      setNetworkMessage("Интернет пропал. Уже загруженные части сохранены, продолжение будет с них.");
     }
 
     window.addEventListener("online", handleOnline);
@@ -232,11 +248,6 @@ export default function UploadPage() {
     };
   }, []);
 
-  function rememberSession(nextSession) {
-    sessionIdRef.current = nextSession?.id || null;
-    setSession(nextSession);
-  }
-
   useEffect(() => {
     if (!startedAt || !totals.totalBytes) {
       speedSamplesRef.current = [];
@@ -253,7 +264,7 @@ export default function UploadPage() {
     if (nextSamples.length >= 2) {
       const first = nextSamples[0];
       const last = nextSamples[nextSamples.length - 1];
-      const elapsedSeconds = Math.max((last.timestamp - first.timestamp) / 1000, 0.25);
+      const elapsedSeconds = Math.max((last.timestamp - first.timestamp) / 1000, 0.2);
       speed = Math.max(0, (last.uploadedBytes - first.uploadedBytes) / elapsedSeconds);
     } else if (totals.uploadedBytes > 0) {
       const elapsed = Math.max((now - startedAt) / 1000, 1);
@@ -262,6 +273,11 @@ export default function UploadPage() {
     const eta = speed ? (totals.totalBytes - totals.uploadedBytes) / speed : 0;
     setTelemetry({ speed, eta });
   }, [startedAt, totals.totalBytes, totals.uploadedBytes]);
+
+  function rememberSession(nextSession) {
+    sessionIdRef.current = nextSession?.id || null;
+    setSession(nextSession);
+  }
 
   function persistDraftSnapshot(nextQueue) {
     if (!sessionIdRef.current) return;
@@ -295,6 +311,10 @@ export default function UploadPage() {
     });
   }
 
+  function getQueueEntry(signature) {
+    return queueRef.current.find((entry) => entry.signature === signature) || null;
+  }
+
   function attachFiles(list) {
     const nextFiles = Array.from(list || []);
     const draft = readDraft();
@@ -306,7 +326,7 @@ export default function UploadPage() {
     setError("");
     setNetworkMessage(
       matchingDraft
-        ? "Нашёл незавершённую загрузку. Можно продолжить без повторной отправки уже загруженных частей."
+        ? "Нашёл незавершённую загрузку. Продолжаю по серверному состоянию без повторной отправки готовых частей."
         : ""
     );
     if (matchingDraft?.batchId) {
@@ -337,8 +357,11 @@ export default function UploadPage() {
     return response.item.id;
   }
 
-  async function syncServerFile(batchId, entry) {
-    const totalChunks = Math.ceil(entry.size / entry.chunkSize);
+  async function openRemoteFile(batchId, signature) {
+    const entry = getQueueEntry(signature);
+    if (!entry) {
+      throw new Error("Upload entry disappeared");
+    }
     const response = await apiFetch(`/uploads/${batchId}/files/sync`, {
       method: "POST",
       body: {
@@ -347,30 +370,30 @@ export default function UploadPage() {
         sizeBytes: entry.size,
         mimeType: entry.file.type || "application/octet-stream",
         chunkSize: entry.chunkSize,
-        totalChunks,
+        totalChunks: entry.totalChunks,
       },
     });
-    const item = response.item;
+    const serverEntry = response.item;
     const completedChunks = mergeCompletedChunks(
       entry.completedChunks || [],
-      item.receivedChunkIndexes || [],
-      deriveCompletedChunks(item.uploadedBytes || 0, entry.size, entry.chunkSize)
+      serverEntry.receivedChunkIndexes || [],
+      deriveCompletedChunks(serverEntry.uploadedBytes || 0, entry.size, entry.chunkSize)
     );
     const uploadedBytes = Math.min(
-      Math.max(item.uploadedBytes || 0, completedBytesFromChunks(completedChunks, entry.size, entry.chunkSize)),
+      Math.max(serverEntry.uploadedBytes || 0, completedBytesFromChunks(completedChunks, entry.size, entry.chunkSize)),
       entry.size
     );
     updateQueue(
       (current) =>
         current.map((candidate) =>
-          candidate.signature === entry.signature
+          candidate.signature === signature
             ? {
                 ...candidate,
-                fileId: item.id,
+                fileId: serverEntry.id,
                 uploadedBytes,
                 progress: entry.size ? uploadedBytes / entry.size : 0,
                 completedChunks,
-                status: item.status === "uploaded" ? "uploaded" : candidate.status,
+                status: uploadedBytes >= entry.size ? "uploaded" : "uploading",
                 error: "",
               }
             : candidate
@@ -380,69 +403,76 @@ export default function UploadPage() {
     if (response.batch) {
       rememberSession(response.batch);
     }
-    return item;
+    return {
+      fileId: serverEntry.id,
+      completedChunks,
+      uploadedBytes,
+      totalChunks: entry.totalChunks,
+    };
   }
 
-  async function uploadEntry(batchId, entry) {
-    const synced = await syncServerFile(batchId, entry);
-    const totalChunks = Math.ceil(entry.size / entry.chunkSize);
-    let completedChunks = mergeCompletedChunks(
-      entry.completedChunks || [],
-      synced.receivedChunkIndexes || [],
-      deriveCompletedChunks(synced.uploadedBytes || 0, entry.size, entry.chunkSize)
-    );
-    if (completedBytesFromChunks(completedChunks, entry.size, entry.chunkSize) >= entry.size) {
-      updateQueue(
-        (current) =>
-          current.map((candidate) =>
-            candidate.signature === entry.signature
-              ? {
-                  ...candidate,
-                  fileId: synced.id,
-                  uploadedBytes: entry.size,
-                  progress: 1,
-                  completedChunks,
-                  status: "uploaded",
-                }
-              : candidate
-          ),
-        { persist: "immediate" }
-      );
-      return synced.id;
-    }
-
+  async function finalizeRemoteFile(batchId, signature) {
+    const entry = getQueueEntry(signature);
+    if (!entry?.fileId) return;
+    await apiFetch(`/uploads/${batchId}/files/${entry.fileId}/finalize`, { method: "POST" });
     updateQueue(
       (current) =>
         current.map((candidate) =>
-          candidate.signature === entry.signature
-            ? { ...candidate, fileId: synced.id, status: "uploading", error: "" }
+          candidate.signature === signature
+            ? {
+                ...candidate,
+                uploadedBytes: candidate.size,
+                progress: 1,
+                completedChunks: Array.from({ length: candidate.totalChunks }, (_, index) => index),
+                status: "uploaded",
+                error: "",
+              }
             : candidate
         ),
       { persist: "immediate" }
     );
+  }
 
-    const completedSet = new Set(completedChunks);
+  async function uploadEntryAttempt(batchId, signature) {
+    const synced = await openRemoteFile(batchId, signature);
+    const entry = getQueueEntry(signature);
+    if (!entry) {
+      throw new Error("Upload entry disappeared");
+    }
+
+    const completedSet = new Set(synced.completedChunks);
     const inFlightProgress = new Map();
-    const pendingChunkIndexes = Array.from({ length: totalChunks }, (_, index) => index).filter(
+    const pendingIndexes = Array.from({ length: entry.totalChunks }, (_, index) => index).filter(
       (index) => !completedSet.has(index)
     );
-    let nextChunkCursor = 0;
 
-    function refreshEntryProgress({ persist = "none", status = "uploading" } = {}) {
-      const committedBytes = completedBytesFromChunks([...completedSet], entry.size, entry.chunkSize);
+    if (!pendingIndexes.length) {
+      await finalizeRemoteFile(batchId, signature);
+      return;
+    }
+
+    const partWorkers = Math.min(
+      pickPartWorkers(entry.size, queueRef.current.length),
+      pendingIndexes.length || 1
+    );
+    let cursor = 0;
+    let fatalError = null;
+
+    function refreshProgress({ persist = "none", status = "uploading" } = {}) {
+      const latest = getQueueEntry(signature);
+      if (!latest) return;
+      const committedBytes = completedBytesFromChunks([...completedSet], latest.size, latest.chunkSize);
       const inflightBytes = [...inFlightProgress.values()].reduce((sum, value) => sum + value, 0);
-      const uploadedBytes = Math.min(committedBytes + inflightBytes, entry.size);
-      const mergedCompletedChunks = [...completedSet].sort((left, right) => left - right);
+      const uploadedBytes = Math.min(committedBytes + inflightBytes, latest.size);
       updateQueue(
         (current) =>
           current.map((candidate) =>
-            candidate.signature === entry.signature
+            candidate.signature === signature
               ? {
                   ...candidate,
-                  fileId: synced.id,
                   uploadedBytes: Math.max(candidate.uploadedBytes || 0, uploadedBytes),
-                  progress: entry.size ? Math.min(uploadedBytes / entry.size, 1) : 1,
-                  completedChunks: mergedCompletedChunks,
+                  progress: latest.size ? Math.min(uploadedBytes / latest.size, 1) : 1,
+                  completedChunks: [...completedSet].sort((left, right) => left - right),
                   status,
                   error: "",
                 }
@@ -452,21 +482,24 @@ export default function UploadPage() {
       );
     }
 
-    async function uploadChunkByIndex(chunkIndex) {
+    async function sendChunk(chunkIndex) {
       if (!navigator.onLine) {
         const interruption = new Error("Internet connection lost");
         interruption.code = "NETWORK";
         throw interruption;
       }
-
-      const startByte = chunkIndex * entry.chunkSize;
-      const endByte = Math.min(startByte + entry.chunkSize, entry.size);
-      const chunk = entry.file.slice(startByte, endByte);
+      const latest = getQueueEntry(signature);
+      if (!latest) {
+        throw new Error("Upload entry disappeared");
+      }
+      const startByte = chunkIndex * latest.chunkSize;
+      const endByte = Math.min(startByte + latest.chunkSize, latest.size);
+      const chunk = latest.file.slice(startByte, endByte);
       inFlightProgress.set(chunkIndex, 0);
-      refreshEntryProgress();
+      refreshProgress();
 
       try {
-        const response = await uploadBinaryChunk(`/uploads/${batchId}/files/${synced.id}/chunk`, chunk, {
+        const response = await uploadBinaryChunk(`/uploads/${batchId}/files/${latest.fileId}/chunk`, chunk, {
           token: getStoredToken(),
           headers: {
             "Content-Type": "application/octet-stream",
@@ -480,64 +513,58 @@ export default function UploadPage() {
             }
             lastProgressUpdateRef.current = now;
             inFlightProgress.set(chunkIndex, loaded);
-            refreshEntryProgress();
+            refreshProgress();
           },
         });
         inFlightProgress.delete(chunkIndex);
-        mergeCompletedChunks([chunkIndex], [...completedSet], response.item.receivedChunkIndexes || []).forEach(
-          (value) => completedSet.add(value)
-        );
-        if (response.batch) {
-          rememberSession(response.batch);
-        }
-        refreshEntryProgress({
-          persist: "immediate",
-          status: response.item.status === "uploaded" ? "uploaded" : "uploading",
+        completedSet.add(chunkIndex);
+        refreshProgress({
+          persist: completedSet.size % 2 === 0 ? "immediate" : "deferred",
+          status: response.item?.status === "uploaded" ? "uploaded" : "uploading",
         });
       } catch (chunkError) {
         inFlightProgress.delete(chunkIndex);
-        if (chunkError.status === 409 && chunkError.payload?.expectedStartByte !== undefined) {
-          mergeCompletedChunks(
-            [...completedSet],
-            chunkError.payload?.item?.receivedChunkIndexes || []
-          ).forEach((value) => completedSet.add(value));
-          refreshEntryProgress({ persist: "immediate" });
-          return;
+        if (chunkError.status === 409) {
+          chunkError.code = "RESYNC";
+        } else if (!navigator.onLine || /network/i.test(chunkError.message)) {
+          chunkError.code = "NETWORK";
+        } else {
+          chunkError.code = chunkError.code || "UPLOAD";
         }
-        chunkError.code = chunkError.code || (navigator.onLine ? "UPLOAD" : "NETWORK");
         throw chunkError;
       }
     }
 
-    const workerCount = Math.min(MAX_PARALLEL_CHUNKS, pendingChunkIndexes.length || 1);
     await Promise.all(
-      Array.from({ length: workerCount }, async () => {
-        while (nextChunkCursor < pendingChunkIndexes.length) {
-          const chunkIndex = pendingChunkIndexes[nextChunkCursor];
-          nextChunkCursor += 1;
-          await uploadChunkByIndex(chunkIndex);
+      Array.from({ length: partWorkers }, async () => {
+        while (!fatalError && cursor < pendingIndexes.length) {
+          const chunkIndex = pendingIndexes[cursor];
+          cursor += 1;
+          try {
+            await sendChunk(chunkIndex);
+          } catch (err) {
+            fatalError = err;
+          }
         }
       })
     );
 
-    await apiFetch(`/uploads/${batchId}/files/${synced.id}/finalize`, { method: "POST" });
-    updateQueue(
-      (current) =>
-        current.map((candidate) =>
-          candidate.signature === entry.signature
-            ? {
-                ...candidate,
-                uploadedBytes: entry.size,
-                progress: 1,
-                completedChunks: Array.from({ length: totalChunks }, (_, index) => index),
-                status: "uploaded",
-                error: "",
-              }
-            : candidate
-        ),
-      { persist: "immediate" }
-    );
-    return synced.id;
+    if (fatalError) {
+      throw fatalError;
+    }
+
+    await finalizeRemoteFile(batchId, signature);
+  }
+
+  async function uploadEntry(batchId, signature, attempt = 0) {
+    try {
+      await uploadEntryAttempt(batchId, signature);
+    } catch (errorObject) {
+      if (errorObject.code === "RESYNC" && attempt < 2) {
+        return uploadEntry(batchId, signature, attempt + 1);
+      }
+      throw errorObject;
+    }
   }
 
   async function watchBatch(batchId) {
@@ -573,14 +600,24 @@ export default function UploadPage() {
 
       lastProgressUpdateRef.current = 0;
       speedSamplesRef.current = [];
-      const entries =
-        queueRef.current.length ? queueRef.current : queueFromFiles(files, readDraft(), preferredChunkSize);
-      for (const entry of entries) {
-        await uploadEntry(batchId, entry);
-      }
+      const pendingSignatures = (queueRef.current.length ? queueRef.current : queueFromFiles(files, readDraft(), preferredChunkSize))
+        .filter((entry) => entry.uploadedBytes < entry.size)
+        .map((entry) => entry.signature);
+
+      let cursor = 0;
+      const fileWorkers = Math.min(MAX_PARALLEL_FILES, pendingSignatures.length || 1);
+      await Promise.all(
+        Array.from({ length: fileWorkers }, async () => {
+          while (cursor < pendingSignatures.length) {
+            const signature = pendingSignatures[cursor];
+            cursor += 1;
+            await uploadEntry(batchId, signature);
+          }
+        })
+      );
 
       resumeOnReconnectRef.current = false;
-      setNetworkMessage("Все части загружены. Передаю батч в обработку.");
+      setNetworkMessage("Все данные загружены новым upload engine. Передаю батч в обработку.");
       const commit = await apiFetch(`/uploads/${batchId}/commit`, { method: "POST" });
       rememberSession(commit.item);
       writeDraft(null);
@@ -608,7 +645,7 @@ export default function UploadPage() {
       );
       setError(
         isNetworkIssue
-          ? "Соединение оборвалось. Уже загруженные части сохранены, можно продолжить."
+          ? "Соединение оборвалось. Уже переданные части сохранены, загрузку можно продолжить."
           : submitError.message
       );
       setNetworkMessage(
@@ -643,10 +680,10 @@ export default function UploadPage() {
       <section className="glass panel upload-hero">
         <div className="section-head">
           <div>
-            <p className="eyebrow">resumable uploader</p>
-            <h1>Массовая загрузка с продолжением после обрыва</h1>
+            <p className="eyebrow">upload engine v2</p>
+            <h1>Массовая загрузка с быстрым resume</h1>
             <p className="muted">
-              Архивы и медиа отправляются по частям. Если интернет прервётся, уже залитые куски не теряются.
+              Переписанный движок грузит крупнее, реже пишет метаданные и продолжает с серверного состояния после обрыва.
             </p>
           </div>
           <div className={`status-pill ${isOnline ? "" : "warning-pill"}`}>
@@ -673,7 +710,7 @@ export default function UploadPage() {
           <div className="upload-dropzone-copy">
             <h3>Перетащите файлы, архивы или целые пачки</h3>
             <p className="muted">
-              После сбоя можно повторно выбрать те же файлы и продолжить с того места, где остановилось.
+              Большие файлы режутся на более крупные части, а батч может грузить несколько файлов параллельно.
             </p>
           </div>
           <div className="button-row">
@@ -736,7 +773,7 @@ export default function UploadPage() {
                 : "Черновика загрузки пока нет."}
             </p>
             <p className="muted">
-              При обновлении страницы просто снова выберите тот же набор файлов.
+              При обновлении страницы снова выберите тот же набор файлов, и клиент сверится с сервером.
             </p>
           </div>
         </div>
@@ -758,7 +795,7 @@ export default function UploadPage() {
               <div className="queue-copy">
                 <strong>{entry.name}</strong>
                 <p className="muted">
-                  {formatBytes(entry.size)} • {entry.status}
+                  {formatBytes(entry.size)} • {entry.status} • chunk {formatBytes(entry.chunkSize)}
                 </p>
                 {entry.error ? <p className="muted">{entry.error}</p> : null}
               </div>
