@@ -4,9 +4,20 @@ import { apiFetch, getStoredToken, uploadBinaryChunk } from "../api";
 import { formatBytes, formatDuration, formatRate } from "../lib/format";
 
 const DRAFT_KEY = "mediahub_upload_draft_v2";
-const DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024;
+const DEFAULT_CHUNK_SIZE = 16 * 1024 * 1024;
 const DRAFT_SYNC_DELAY_MS = 800;
 const PROGRESS_REFRESH_MS = 120;
+
+function pickChunkSize(fileSize, preferredChunkSize) {
+  const base = Math.max(preferredChunkSize || DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_SIZE);
+  if (fileSize >= 1024 * 1024 * 1024) {
+    return Math.max(base, 32 * 1024 * 1024);
+  }
+  if (fileSize >= 256 * 1024 * 1024) {
+    return Math.max(base, 24 * 1024 * 1024);
+  }
+  return base;
+}
 
 function fileSignature(file) {
   return `${file.name}:${file.size}:${file.lastModified}`;
@@ -49,7 +60,7 @@ function queueFromFiles(files, draft, preferredChunkSize = DEFAULT_CHUNK_SIZE) {
       uploadedBytes,
       progress: file.size ? uploadedBytes / file.size : 0,
       status: saved ? saved.status || "paused" : "queued",
-      chunkSize: saved?.chunkSize || preferredChunkSize,
+      chunkSize: saved?.chunkSize || pickChunkSize(file.size, preferredChunkSize),
       error: saved?.error || "",
     };
   });

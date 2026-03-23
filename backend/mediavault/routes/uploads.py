@@ -17,6 +17,7 @@ from ..services.storage import append_upload_chunk, save_uploaded_stream
 from ..utils import slugify
 
 bp = Blueprint("uploads", __name__)
+CHUNK_PROGRESS_COMMIT_INTERVAL = 4
 
 
 def _batch_scope():
@@ -264,8 +265,13 @@ def upload_file_chunk(batch_id: str, file_id: str):
     upload.status = "uploaded" if upload.uploaded_bytes >= upload.size_bytes else "uploading"
     if upload.status == "uploaded":
         upload.finalized_at = datetime.utcnow()
-    db.session.commit()
-    return jsonify({"item": _serialize_upload_file(upload), "batch": serialize_batch(batch, include_files=False)})
+    payload = {"item": _serialize_upload_file(upload), "batch": serialize_batch(batch, include_files=False)}
+    should_commit = upload.status == "uploaded" or ((chunk_index + 1) % CHUNK_PROGRESS_COMMIT_INTERVAL == 0)
+    if should_commit:
+        db.session.commit()
+    else:
+        db.session.rollback()
+    return jsonify(payload)
 
 
 @bp.post("/<string:batch_id>/files/<string:file_id>/finalize")
