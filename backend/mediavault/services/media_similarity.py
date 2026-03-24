@@ -9,8 +9,9 @@ from ..extensions import db
 from ..models import MediaItem
 from .storage import materialize_storage_path
 
-DEFAULT_SIMILARITY_THRESHOLD = 82
+DEFAULT_SIMILARITY_THRESHOLD = 90
 EXHAUSTIVE_COMPARE_LIMIT = 6000
+EXPECTED_PERCEPTUAL_HASH_LENGTH = 44
 
 
 def _average_hash(image: Image.Image) -> int:
@@ -34,11 +35,31 @@ def _difference_hash(image: Image.Image) -> int:
     return value
 
 
+def _color_hash(image: Image.Image) -> int:
+    reduced = image.resize((4, 4), Image.Resampling.LANCZOS).convert("RGB")
+    pixels = list(reduced.getdata())
+    average_red = sum(pixel[0] for pixel in pixels) / len(pixels)
+    average_green = sum(pixel[1] for pixel in pixels) / len(pixels)
+    average_blue = sum(pixel[2] for pixel in pixels) / len(pixels)
+
+    value = 0
+    for red, green, blue in pixels:
+        value = (value << 1) | int(red >= average_red)
+        value = (value << 1) | int(green >= average_green)
+        value = (value << 1) | int(blue >= average_blue)
+    return value
+
+
 def compute_perceptual_hash(source_path) -> str | None:
     try:
         with Image.open(source_path) as image:
-            image = ImageOps.exif_transpose(image).convert("L")
-            return f"{_difference_hash(image):016x}{_average_hash(image):016x}"
+            image = ImageOps.exif_transpose(image)
+            grayscale = image.convert("L")
+            return (
+                f"{_difference_hash(grayscale):016x}"
+                f"{_average_hash(grayscale):016x}"
+                f"{_color_hash(image):012x}"
+            )
     except (UnidentifiedImageError, OSError, ValueError):
         return None
 
@@ -76,7 +97,7 @@ def ensure_perceptual_hashes(items: Iterable[MediaItem]) -> None:
 
         if canonical.id not in cache:
             hash_value = canonical.perceptual_hash
-            if not hash_value:
+            if not hash_value or len(hash_value) != EXPECTED_PERCEPTUAL_HASH_LENGTH:
                 source_relative = canonical.preview_path or canonical.storage_path
                 with materialize_storage_path(source_relative, canonical.is_encrypted) as source_path:
                     hash_value = compute_perceptual_hash(source_path)
@@ -103,30 +124,18 @@ def build_similar_duplicate_groups(
         return []
 
     candidates.sort(key=lambda item: (item.created_at, item.id))
-    parents = list(range(len(candidates)))
-    ranks = [0] * len(candidates)
     hash_ints = [int(item.perceptual_hash, 16) for item in candidates]
     total_bits = len(candidates[0].perceptual_hash) * 4
 
-    def find(index: int) -> int:
-        while parents[index] != index:
-            parents[index] = parents[parents[index]]
-            index = parents[index]
-        return index
-
-    def union(left: int, right: int) -> None:
-        root_left = find(left)
-        root_right = find(right)
-        if root_left == root_right:
-            return
-        if ranks[root_left] < ranks[root_right]:
-            root_left, root_right = root_right, root_left
-        parents[root_right] = root_left
-        if ranks[root_left] == ranks[root_right]:
-            ranks[root_left] += 1
-
     pair_similarity: dict[tuple[int, int], int] = {}
+    adjacency: list[dict[int, int]] = [dict() for _ in candidates]
     compared_pairs: set[tuple[int, int]] = set()
+
+    def record_similarity(left_index: int, right_index: int, similarity: int) -> None:
+        ordered = tuple(sorted((left_index, right_index)))
+        pair_similarity[ordered] = similarity
+        adjacency[left_index][right_index] = similarity
+        adjacency[right_index][left_index] = similarity
 
     if len(candidates) <= EXHAUSTIVE_COMPARE_LIMIT:
         for left_index in range(len(candidates)):
@@ -134,8 +143,7 @@ def build_similar_duplicate_groups(
             for right_index in range(left_index + 1, len(candidates)):
                 similarity = _compare_hash_ints(left_hash, hash_ints[right_index], total_bits)
                 if similarity >= threshold_percent:
-                    union(left_index, right_index)
-                    pair_similarity[(left_index, right_index)] = similarity
+                    record_similarity(left_index, right_index, similarity)
     else:
         band_map: dict[str, list[int]] = defaultdict(list)
         for current_index, item in enumerate(candidates):
@@ -151,62 +159,79 @@ def build_similar_duplicate_groups(
                         total_bits,
                     )
                     if similarity >= threshold_percent:
-                        union(other_index, current_index)
-                        pair_similarity[pair] = similarity
+                        record_similarity(other_index, current_index, similarity)
                 band_map[band_key].append(current_index)
 
-    grouped_indexes: dict[int, list[int]] = defaultdict(list)
-    for index in range(len(candidates)):
-        grouped_indexes[find(index)].append(index)
+    if not pair_similarity:
+        return []
+
+    def neighbor_average(index: int) -> float:
+        scores = list(adjacency[index].values())
+        return sum(scores) / len(scores) if scores else 0
+
+    ordered_indexes = sorted(
+        range(len(candidates)),
+        key=lambda index: (
+            -len(adjacency[index]),
+            -neighbor_average(index),
+            candidates[index].is_duplicate,
+            candidates[index].created_at,
+            candidates[index].id,
+        ),
+    )
 
     groups = []
-    for indexes in grouped_indexes.values():
-        if len(indexes) < 2:
+    used_indexes: set[int] = set()
+
+    for anchor_index in ordered_indexes:
+        if anchor_index in used_indexes:
             continue
 
-        best_similarity = {candidates[index].id: 100 for index in indexes}
-        pair_scores = []
-        for left_position, left_index in enumerate(indexes):
-            for right_index in indexes[left_position + 1 :]:
-                ordered = tuple(sorted((left_index, right_index)))
-                similarity = pair_similarity.get(ordered)
-                if similarity is None:
-                    similarity = _compare_hash_ints(
-                        hash_ints[left_index],
-                        hash_ints[right_index],
-                        total_bits,
-                    )
-                pair_scores.append(similarity)
-                best_similarity[candidates[left_index].id] = max(
-                    best_similarity[candidates[left_index].id],
-                    similarity,
-                )
-                best_similarity[candidates[right_index].id] = max(
-                    best_similarity[candidates[right_index].id],
-                    similarity,
-                )
+        neighbor_entries = [
+            (neighbor_index, similarity)
+            for neighbor_index, similarity in adjacency[anchor_index].items()
+            if neighbor_index not in used_indexes
+        ]
+        if not neighbor_entries:
+            continue
 
-        group_items = [candidates[index] for index in indexes]
-        group_items.sort(
-            key=lambda item: (
-                -best_similarity.get(item.id, 100),
-                item.is_duplicate,
-                item.created_at,
-                item.id,
+        neighbor_entries.sort(
+            key=lambda entry: (
+                -entry[1],
+                candidates[entry[0]].is_duplicate,
+                candidates[entry[0]].created_at,
+                candidates[entry[0]].id,
             )
         )
-        representative = group_items[0]
+
+        representative = candidates[anchor_index]
+        member_indexes = [anchor_index]
+        member_scores = {representative.id: 100}
+        similarity_scores = []
+
+        for neighbor_index, similarity in neighbor_entries:
+            member_indexes.append(neighbor_index)
+            member_scores[candidates[neighbor_index].id] = similarity
+            similarity_scores.append(similarity)
+
+        if len(member_indexes) < 2:
+            continue
+
+        used_indexes.update(member_indexes)
+        ordered_group_items = [representative] + [candidates[index] for index, _ in neighbor_entries]
         groups.append(
             {
                 "key": f"similar-{representative.id}",
-                "count": len(group_items),
-                "similarityPercent": round(sum(pair_scores) / len(pair_scores)) if pair_scores else 100,
+                "count": len(ordered_group_items),
+                "similarityPercent": round(sum(similarity_scores) / len(similarity_scores))
+                if similarity_scores
+                else 100,
                 "items": [
                     {
                         "item": item,
-                        "matchPercent": best_similarity.get(item.id, 100),
+                        "matchPercent": member_scores.get(item.id, 100),
                     }
-                    for item in group_items
+                    for item in ordered_group_items
                 ],
             }
         )
