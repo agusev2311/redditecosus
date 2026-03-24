@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "../api";
 import MediaCard from "../components/MediaCard";
 
-const DEFAULT_THRESHOLD = 90;
+const DEFAULT_THRESHOLD = 85;
 
 export default function DuplicatesPage() {
   const [groups, setGroups] = useState([]);
