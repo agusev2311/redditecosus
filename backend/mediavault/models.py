@@ -129,7 +129,7 @@ class MediaItem(TimestampMixin, db.Model):
     height = db.Column(db.Integer, nullable=True)
     duration_seconds = db.Column(db.Float, nullable=True)
     sha256_hash = db.Column(db.String(64), nullable=False, index=True)
-    perceptual_hash = db.Column(db.String(32), nullable=True, index=True)
+    perceptual_hash = db.Column(db.String(160), nullable=True, index=True)
     note = db.Column(db.Text, nullable=True)
     is_encrypted = db.Column(db.Boolean, nullable=False, default=False)
     is_duplicate = db.Column(db.Boolean, nullable=False, default=False, index=True)
